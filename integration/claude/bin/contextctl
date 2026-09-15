@@ -1,0 +1,13 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# The Kioku host CLI: hook client and operator commands.
+#
+# stdout carries event-specific output or the operator report; diagnostics go to stderr
+# [plan §3 trust-boundary table].
+
+$LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
+
+require "kioku/ctl/command"
+
+exit(Kioku::Ctl::Command.new(argv: ARGV, stdin: $stdin, stdout: $stdout, stderr: $stderr).call)

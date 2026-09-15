@@ -13,6 +13,13 @@ require "action_controller/railtie"
 # canonical rows and retained objects on a shared volume; none of those
 # subsystems has an implemented responsibility here.
 
+# A consequence of that trimming: in a full Rails app `Numeric#megabytes` is
+# pulled in as a side effect of active_storage/engine, and without it
+# config/environments/{development,production}.rb raise NoMethodError on
+# `32.megabytes` before the application finishes booting. Require the core
+# extension those configs actually use rather than reinstating a subsystem.
+require "active_support/core_ext/numeric/bytes"
+
 Bundler.require(*Rails.groups)
 
 module Kioku

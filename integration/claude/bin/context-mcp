@@ -1,0 +1,19 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# The Kioku MCP stdio adapter.
+#
+# stdout carries JSON-RPC and nothing else: no banner, no log line, no warning. Every
+# diagnostic goes to stderr [plan §3 trust-boundary table; research §11].
+
+$LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
+
+require "kioku/host_link"
+require "kioku/logger"
+require "kioku/mcp/server"
+
+logger = Kioku::Logger.new(program: "context-mcp")
+link = Kioku::HostLink.new(logger: logger)
+
+logger.info("serving six tools; host agent socket #{link.socket_path}")
+Kioku::Mcp::Server.new(link: link, logger: logger).run

@@ -49,6 +49,14 @@
 default: &default
   adapter: postgresql
   encoding: unicode
+  # paradedb/paradedb:0.25.9-pg18 pre-installs nine extensions into template1
+  # (fuzzystrmatch, pg_ivm, pg_search, pg_stat_statements, plpgsql, postgis,
+  # postgis_tiger_geocoder, postgis_topology, vector), so a database created the
+  # default way inherits every one of them no matter how the migrations are
+  # written. template0 carries only plpgsql; the first migration then enables
+  # vector and pg_search explicitly, and nothing else. Verified by creating a
+  # database each way and comparing pg_extension.
+  template: template0
   pool: <%= ENV.fetch("RAILS_MAX_THREADS", 5) %>
   # Fail a checkout fast rather than parking a request thread: the tool contract
   # bounds every call with deadline_ms, so an unbounded wait here would burn the

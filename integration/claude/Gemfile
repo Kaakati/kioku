@@ -1,0 +1,22 @@
+# frozen_string_literal: true
+
+# The Kioku host adapter package.
+#
+# "The small host adapter needs its packaged/qualified Ruby runtime; it is an integration
+# boundary, not a second backend" [plan §3.1]. It boots no Rails and touches no database:
+# the only dependency is the official Ruby MCP SDK for the stdio adapter [plan §4.2],
+# pinned exactly because Phase 0 qualifies exact APIs.
+#
+# The entry points in bin/ deliberately do not `require "bundler/setup"`. A hook runs on
+# every prompt and every tool call inside a one-second outer guard [research Appendix B],
+# so the package resolves against the installed runtime instead of paying Bundler's
+# start-up cost on each invocation.
+
+source "https://rubygems.org"
+
+gem "mcp", "1.5.1"
+
+group :development do
+  gem "minitest", "~> 5.25"
+  gem "rake", "~> 13.2"
+end

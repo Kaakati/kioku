@@ -1,0 +1,30 @@
+# frozen_string_literal: true
+
+require "rbconfig"
+
+PACKAGE_ROOT = File.expand_path(__dir__)
+
+def host_test_files
+  Dir.glob(File.join(PACKAGE_ROOT, "test", "**", "*_test.rb")).sort
+end
+
+desc "Run every host-package test file in its own process"
+task :test do
+  files = host_test_files
+  abort("no test files found under #{File.join(PACKAGE_ROOT, 'test')}") if files.empty?
+
+  failed = files.reject do |file|
+    relative = file.sub("#{PACKAGE_ROOT}/", "")
+    puts "\n==> #{relative}"
+    system(RbConfig.ruby, "-I", File.join(PACKAGE_ROOT, "test"), file)
+  end
+
+  puts "\n#{files.size - failed.size}/#{files.size} test files passed"
+  unless failed.empty?
+    puts "failing files:"
+    failed.each { |file| puts "  #{file.sub("#{PACKAGE_ROOT}/", '')}" }
+    abort("host-package test run failed")
+  end
+end
+
+task default: :test

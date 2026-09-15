@@ -1,0 +1,14 @@
+{
+  "_comment": "Kioku MCP registration template. context-mcp speaks JSON-RPC over stdio and reserves stdout for protocol messages; KIOKU_SOCKET_PATH points at the private host agent socket that carries every call to the core.",
+  "mcpServers": {
+    "kioku": {
+      "type": "stdio",
+      "command": "context-mcp",
+      "args": [],
+      "env": {
+        "KIOKU_SOCKET_PATH": "~/.kioku/run/agent.sock",
+        "KIOKU_LOG_LEVEL": "warn"
+      }
+    }
+  }
+}
