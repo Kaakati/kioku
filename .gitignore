@@ -106,3 +106,7 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
+
+# sdh Claude Code plugin: installed separately, not Kioku source.
+# Stripped from every commit before the first push; ignored so it cannot return.
+.claude/
