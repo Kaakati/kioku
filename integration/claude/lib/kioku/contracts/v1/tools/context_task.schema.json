@@ -1,0 +1,301 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tools/context_task.schema.json",
+  "title": "context_task",
+  "description": "Maintain one project-bound task's contract, material claims, immutable candidates, planned checks, checkpoints, assessments and scoped completion through a discriminated eight-operation schema that is not an arbitrary command or SQL interface. A task always resolves to exactly one project.",
+
+  "oneOf": [
+    { "$ref": "#/$defs/op_get" },
+    { "$ref": "#/$defs/op_set_contract" },
+    { "$ref": "#/$defs/op_record_claim" },
+    { "$ref": "#/$defs/op_propose" },
+    { "$ref": "#/$defs/op_plan_check" },
+    { "$ref": "#/$defs/op_assess" },
+    { "$ref": "#/$defs/op_checkpoint" },
+    { "$ref": "#/$defs/op_close" }
+  ],
+
+  "$defs": {
+    "criterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["criterion_key", "description", "required", "authority", "verification_policy"],
+      "properties": {
+        "criterion_key": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "description": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "required": { "type": "boolean" },
+        "authority": {
+          "$ref": "common.schema.json#/$defs/criterion_authority",
+          "x-kioku-core-derived-exempt": "Per-criterion provenance on a task contract, required as a declared input by task_operations.set_contract. Recording which authority a criterion claims is what lets the core refuse an assistant actor relaxing a user-authority criterion. The claim does not grant the authority."
+        },
+        "verification_policy": { "type": "object" }
+      }
+    },
+    "precondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "detail"],
+      "properties": {
+        "kind": { "$ref": "common.schema.json#/$defs/precondition_kind" },
+        "detail": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      }
+    },
+
+    "op_get": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["envelope", "op", "task_key"],
+      "properties": {
+        "envelope": { "$ref": "envelope.request.schema.json#/$defs/read" },
+        "op": { "const": "get" },
+        "task_key": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "include": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/task_projection" } },
+        "at_contract_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "A historical view, always labelled applicability=historical."
+        },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
+        "cursor": { "type": "string", "maxLength": 2048 },
+        "token_budget": { "$ref": "common.schema.json#/$defs/token_budget" }
+      },
+      "description": "Read-only projection. Returns state, heads and the generation vector so a later close can pass matching expected_heads."
+    },
+
+    "op_set_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["envelope", "op", "objective", "scope", "criteria", "origin_event_ref"],
+      "properties": {
+        "envelope": { "$ref": "envelope.request.schema.json#/$defs/mutation" },
+        "op": { "const": "set_contract" },
+        "task_key": {
+          "$ref": "common.schema.json#/$defs/non_empty_string",
+          "description": "Omit to create. A create is deduplicated by idempotency_key."
+        },
+        "objective": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["project_key"],
+          "properties": {
+            "project_key": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+            "repository_keys": { "$ref": "common.schema.json#/$defs/string_list" },
+            "worktree_keys": { "$ref": "common.schema.json#/$defs/string_list" }
+          }
+        },
+        "criteria": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 200,
+          "items": { "$ref": "#/$defs/criterion" },
+          "description": "An empty list is legal and leaves the task unassessable, never vacuously complete."
+        },
+        "origin_event_ref": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "constraints": { "$ref": "common.schema.json#/$defs/string_list" },
+        "known_exclusions": { "$ref": "common.schema.json#/$defs/string_list" },
+        "state": { "$ref": "common.schema.json#/$defs/checkpoint_state" },
+        "token_budget": { "$ref": "common.schema.json#/$defs/token_budget" }
+      },
+      "description": "Creates the task head and its initial contract in one transaction, or appends an immutable contract revision. An assistant actor that relaxes a user-authority required criterion does not commit that change: it is preserved as an auditable proposal, or refused with kioku.authority_violation."
+    },
+
+    "op_record_claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["envelope", "op", "task_key", "contract_revision", "statement", "materiality", "subjects"],
+      "properties": {
+        "envelope": { "$ref": "envelope.request.schema.json#/$defs/mutation" },
+        "op": { "const": "record_claim" },
+        "task_key": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "contract_revision": { "type": "integer", "minimum": 1 },
+        "statement": { "type": "string", "minLength": 1, "maxLength": 16384 },
+        "materiality": { "$ref": "common.schema.json#/$defs/claim_materiality" },
+        "subjects": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": { "$ref": "common.schema.json#/$defs/typed_handle" }
+        },
+        "assumptions": { "$ref": "common.schema.json#/$defs/string_list" },
+        "supporting_evidence": { "type": "array", "maxItems": 50, "items": { "$ref": "common.schema.json#/$defs/evidence_link" } },
+        "conflicting_evidence": { "type": "array", "maxItems": 50, "items": { "$ref": "common.schema.json#/$defs/evidence_link" } },
+        "alternative_explanations": { "$ref": "common.schema.json#/$defs/string_list" },
+        "contradiction_conditions": { "type": "string", "maxLength": 4096 },
+        "assessment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["support", "evaluator", "rationale"],
+          "properties": {
+            "support": { "$ref": "common.schema.json#/$defs/claim_support_value" },
+            "evaluator": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+            "rationale": { "type": "string", "minLength": 1, "maxLength": 16384 }
+          },
+          "description": "An assessment supplied by a model actor is recorded as an ATTRIBUTED JUDGMENT with its evaluator, never as a verified fact. This is why `assessment.support` is an input while the top-level `claim_support` label is core-derived and has no input property anywhere."
+        },
+        "token_budget": { "$ref": "common.schema.json#/$defs/token_budget" }
+      }
+    },
+
+    "op_propose": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["envelope", "op", "task_key", "contract_revision", "proposal"],
+      "properties": {
+        "envelope": { "$ref": "envelope.request.schema.json#/$defs/mutation" },
+        "op": { "const": "propose" },
+        "task_key": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "contract_revision": { "type": "integer", "minimum": 1 },
+        "proposal": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["problem", "mechanism", "expected_effect", "preconditions", "change_scope", "discriminating_check"],
+          "properties": {
+            "problem": { "type": "string", "minLength": 1, "maxLength": 16384 },
+            "mechanism": { "type": "string", "minLength": 1, "maxLength": 16384 },
+            "expected_effect": { "type": "string", "minLength": 1, "maxLength": 16384 },
+            "preconditions": { "type": "array", "items": { "$ref": "#/$defs/precondition" } },
+            "change_scope": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "$ref": "common.schema.json#/$defs/typed_handle" } },
+            "discriminating_check": { "type": "string", "minLength": 1, "maxLength": 4096 }
+          }
+        },
+        "supporting_evidence": { "type": "array", "maxItems": 50, "items": { "$ref": "common.schema.json#/$defs/evidence_link" } },
+        "contrary_evidence": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "common.schema.json#/$defs/evidence_link" },
+          "description": "Never dropped to make a candidate look stronger."
+        },
+        "risks": { "$ref": "common.schema.json#/$defs/string_list" },
+        "verdict": { "$ref": "common.schema.json#/$defs/candidate_verdict" },
+        "retry_conditions": { "type": "string", "maxLength": 4096 },
+        "supersedes_candidate_version_key": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "origin": { "$ref": "common.schema.json#/$defs/candidate_origin" },
+        "token_budget": { "$ref": "common.schema.json#/$defs/token_budget" }
+      },
+      "description": "Candidate versions are immutable: any content change mints a new candidate_version_key rather than editing one, and the composite (task_key, contract_revision, candidate_version_key) prevents a candidate from being borrowed across tasks or contract revisions."
+    },
+
+    "op_plan_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "envelope", "op", "task_key", "contract_revision", "criterion_key", "check_kind",
+        "expected_snapshot_ref", "expected_environment_fingerprint", "verifier_digest",
+        "minimum_input_assurance", "definition"
+      ],
+      "properties": {
+        "envelope": { "$ref": "envelope.request.schema.json#/$defs/mutation" },
+        "op": { "const": "plan_check" },
+        "task_key": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "contract_revision": { "type": "integer", "minimum": 1 },
+        "criterion_key": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "check_kind": { "$ref": "common.schema.json#/$defs/check_kind" },
+        "expected_snapshot_ref": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "expected_environment_fingerprint": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "verifier_digest": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "minimum_input_assurance": { "$ref": "common.schema.json#/$defs/input_assurance" },
+        "definition": { "type": "object" },
+        "candidate_version_key": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "expected_distinguishing_outcomes": { "$ref": "common.schema.json#/$defs/string_list" },
+        "priority": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "decisiveness": { "type": "integer", "minimum": 1 },
+            "affected_requirement": { "type": "string" },
+            "feasibility": { "type": "integer", "minimum": 1 },
+            "expected_latency_ms": { "type": "integer", "minimum": 0 },
+            "expected_token_cost": { "type": "integer", "minimum": 0 },
+            "execution_scope": { "type": "string" }
+          },
+          "description": "Explicit ordinal fields. No numeric information-gain score is presented as calibrated."
+        },
+        "token_budget": { "$ref": "common.schema.json#/$defs/token_budget" }
+      },
+      "description": "Planning a check confers NO execution permission: the response always carries execution_authorized:false, and no hook, job or UI action derives an execution route from check text. Check identity is immutable - different expected inputs, environment fingerprint or verifier digest produce a different check_key."
+    },
+
+    "op_assess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["envelope", "op", "task_key", "expected_contract_revision"],
+      "properties": {
+        "envelope": { "$ref": "envelope.request.schema.json#/$defs/mutation" },
+        "op": { "const": "assess" },
+        "task_key": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "expected_contract_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "A mismatch returns kioku.revision_conflict before any evaluation."
+        },
+        "criterion_keys": { "$ref": "common.schema.json#/$defs/string_list" },
+        "snapshot_ref": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "environment_fingerprint": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "include_evidence": { "type": "boolean" },
+        "token_budget": { "$ref": "common.schema.json#/$defs/token_budget" }
+      },
+      "description": "There is no model-writable pass operation: normalized observations enter only through authenticated ingest. Zero required criteria returns status=success with overall.result='unassessed', never an error and never complete."
+    },
+
+    "op_checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["envelope", "op", "task_key", "contract_revision", "state", "summary"],
+      "properties": {
+        "envelope": { "$ref": "envelope.request.schema.json#/$defs/mutation" },
+        "op": { "const": "checkpoint" },
+        "task_key": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "contract_revision": { "type": "integer", "minimum": 1 },
+        "state": { "$ref": "common.schema.json#/$defs/checkpoint_state" },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 16384 },
+        "open_questions": { "$ref": "common.schema.json#/$defs/string_list" },
+        "next_check_ref": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "evidence": { "type": "array", "maxItems": 50, "items": { "$ref": "common.schema.json#/$defs/evidence_link" } },
+        "context_epoch": { "type": "string" },
+        "persist_as_memory": {
+          "type": "boolean",
+          "default": true,
+          "description": "Writes a task_checkpoint memory revision in the same transaction through the same Remember path."
+        },
+        "token_budget": { "$ref": "common.schema.json#/$defs/token_budget" }
+      },
+      "description": "A checkpoint is attributable working status, separate from a user's acceptance of the result. A session stopping, a commit landing or an agent writing 'done' does not complete the task."
+    },
+
+    "op_close": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["envelope", "op", "task_key", "expected_contract_revision", "receipt_id", "expected_heads"],
+      "properties": {
+        "envelope": { "$ref": "envelope.request.schema.json#/$defs/mutation" },
+        "op": { "const": "close" },
+        "task_key": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "expected_contract_revision": { "type": "integer", "minimum": 1 },
+        "receipt_id": {
+          "$ref": "common.schema.json#/$defs/non_empty_string",
+          "description": "A still-applicable assessment receipt from op=assess."
+        },
+        "expected_heads": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 },
+          "propertyNames": {
+            "enum": ["contract", "criteria", "claims", "candidates", "checks", "source_epoch", "policy_generation", "deletion_epoch"]
+          },
+          "description": "Heads as observed by the caller. A mismatch returns kioku.precondition_failed with the concrete mismatch and never a partial close."
+        },
+        "closing_note": { "type": "string", "maxLength": 16384 },
+        "limitations_acknowledged": { "$ref": "common.schema.json#/$defs/string_list" },
+        "token_budget": { "$ref": "common.schema.json#/$defs/token_budget" }
+      },
+      "description": "close accepts only completed_in_scope. The documents describe no abandoned or superseded disposition, so none is invented. The receipt means completed within this contract, source state and evidence scope; it cannot establish absence of unknown defects."
+    }
+  },
+
+  "x-kioku-refusals": {
+    "unknown_op": "kioku.unsupported_operation",
+    "checkpoint_state_completed_in_scope": "kioku.invalid_request",
+    "expected_contract_revision_mismatch": "kioku.revision_conflict",
+    "close_against_a_stale_receipt_or_moved_heads": "kioku.precondition_failed"
+  }
+}

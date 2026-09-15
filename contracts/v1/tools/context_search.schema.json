@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tools/context_search.schema.json",
+  "title": "context_search",
+  "description": "Return a bounded, scope-authorized, labeled candidate set - the active project's memories plus applicable global engineering records, retained solution cases, code and evidence - found by exact handle, lexical BM25 match, or bounded typed traversal, without asserting that any candidate is true.",
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["envelope", "mode"],
+
+  "properties": {
+    "envelope": { "$ref": "envelope.request.schema.json#/$defs/read" },
+    "mode": { "$ref": "common.schema.json#/$defs/retrieval_mode" },
+    "query": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "description": "Required when mode=lexical. The bounded user or agent query text."
+    },
+    "keys": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": { "$ref": "common.schema.json#/$defs/typed_handle" },
+      "description": "Required when mode=exact. Typed handles or exact locators. Short identifiers resolve here and must not depend on substring matching."
+    },
+    "seeds": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": { "$ref": "common.schema.json#/$defs/typed_handle" },
+      "description": "Required when mode=related. Traversal origins."
+    },
+    "edge_kinds": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": { "$ref": "common.schema.json#/$defs/edge_kind" },
+      "description": "Required when mode=related. An unvalidated name returns kioku.unsupported_operation, not kioku.invalid_request."
+    },
+    "profile": { "$ref": "common.schema.json#/$defs/profile", "default": "mixed" },
+    "filters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "store_kind": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/store_kind" } },
+        "global_categories": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/global_category" } },
+        "memory_kinds": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/memory_kind" } },
+        "lifecycle": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/lifecycle" } },
+        "authority": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/$defs/authority_label" },
+          "x-kioku-core-derived-exempt": "A predicate over the authority label already recorded on stored rows. It narrows what is returned and asserts nothing about the caller."
+        },
+        "language": { "$ref": "common.schema.json#/$defs/string_list" },
+        "repository_key": { "$ref": "common.schema.json#/$defs/string_list" },
+        "worktree_key": { "$ref": "common.schema.json#/$defs/string_list" },
+        "task_key": { "$ref": "common.schema.json#/$defs/string_list" },
+        "valid_at": { "$ref": "common.schema.json#/$defs/rfc3339" },
+        "availability": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/availability" } },
+        "has_open_dispute": { "type": "boolean" },
+        "source_view": { "$ref": "common.schema.json#/$defs/source_view" },
+        "commit_oid": { "type": "string" }
+      }
+    },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 },
+    "candidate_limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 40 },
+    "expand": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hops": { "type": "integer", "minimum": 0, "maximum": 2, "default": 1 },
+        "fanout": { "type": "integer", "minimum": 1, "default": 25 },
+        "max_visited_edges": { "type": "integer", "minimum": 1, "default": 200 },
+        "edge_kinds": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/edge_kind" } }
+      },
+      "description": "Bounded neighbour expansion for mode=exact or lexical. hops above 2 returns kioku.unsupported_operation."
+    },
+    "facets": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/facet_dimension" } },
+    "highlight": {
+      "type": "boolean",
+      "default": true,
+      "description": "Snippet previews. Automatically disabled with warning highlight_unsupported for fuzzy queries; a snippet is a preview, never an exact evidence handle."
+    },
+    "include_disputed": {
+      "type": "boolean",
+      "default": false,
+      "description": "When false, factual assertions with an open dispute are suppressed from confident delivery but governing user decisions, constraints and corrections are still returned with the objection attached."
+    },
+    "require_source_validation": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, an unvalidatable dependency returns kioku.source_unavailable instead of an applicability=unknown label."
+    },
+    "token_budget": { "$ref": "common.schema.json#/$defs/token_budget" },
+    "cursor": { "type": "string", "maxLength": 2048 },
+    "order": { "$ref": "common.schema.json#/$defs/order", "default": "relevance" }
+  },
+
+  "allOf": [
+    { "if": { "properties": { "mode": { "const": "lexical" } }, "required": ["mode"] },
+      "then": { "required": ["query"] } },
+    { "if": { "properties": { "mode": { "const": "solutions" } }, "required": ["mode"] },
+      "then": { "required": ["query"] } },
+    { "if": { "properties": { "mode": { "const": "exact" } }, "required": ["mode"] },
+      "then": { "required": ["keys"] } },
+    { "if": { "properties": { "mode": { "const": "related" } }, "required": ["mode"] },
+      "then": { "required": ["seeds", "edge_kinds"] } }
+  ],
+
+  "x-kioku-deprecated-aliases": {
+    "mode": {
+      "solutions": {
+        "maps_to": { "mode": "lexical", "profile": "solutions" },
+        "note": "The research writes context_search(mode='solutions'); this contract makes mode the retrieval mechanism and profile the subject route. The alias expands server-side and the response reports actual_mode='lexical'."
+      }
+    }
+  },
+  "x-kioku-refusals": {
+    "mode_semantic_or_hybrid": "kioku.unsupported_operation",
+    "edge_kind_outside_vocabulary": "kioku.unsupported_operation",
+    "expand_hops_above_2": "kioku.unsupported_operation"
+  }
+}

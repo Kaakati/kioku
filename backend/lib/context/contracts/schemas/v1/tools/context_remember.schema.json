@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tools/context_remember.schema.json",
+  "title": "context_remember",
+  "description": "Commit one evidence-linked durable memory revision to an explicitly named project or global destination, returning saved only after canonical commit and queued only after durable host enqueue. A save records a conclusion; it never establishes support, so claim_support and authority are core-derived and have no input property here.",
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["envelope", "kind", "destination", "title", "body", "evidence"],
+
+  "properties": {
+    "envelope": { "$ref": "envelope.request.schema.json#/$defs/mutation" },
+    "kind": { "$ref": "common.schema.json#/$defs/memory_kind" },
+    "destination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["store_kind"],
+      "properties": {
+        "store_kind": { "$ref": "common.schema.json#/$defs/store_kind" },
+        "project_key": {
+          "$ref": "common.schema.json#/$defs/non_empty_string",
+          "description": "Required when store_kind=project. An absent or ambiguous project binding returns kioku.project_binding_unresolved; it is never read as permission to write globally."
+        },
+        "category": {
+          "$ref": "common.schema.json#/$defs/global_category",
+          "description": "Required when store_kind=global."
+        }
+      },
+      "allOf": [
+        { "if": { "properties": { "store_kind": { "const": "project" } }, "required": ["store_kind"] },
+          "then": { "required": ["project_key"] } },
+        { "if": { "properties": { "store_kind": { "const": "global" } }, "required": ["store_kind"] },
+          "then": { "required": ["category"] } }
+      ]
+    },
+    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "body": { "type": "string", "minLength": 1, "maxLength": 16384 },
+    "evidence": {
+      "$ref": "common.schema.json#/$defs/evidence_links",
+      "description": "At least one link. The core validates scope, source-anchor schema and object availability before commit. A well-formed ref it cannot resolve is reported in data.evidence_rejected; only an empty eligible set fails with kioku.evidence_required."
+    },
+    "applicability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conditions"],
+      "properties": {
+        "languages": { "$ref": "common.schema.json#/$defs/string_list" },
+        "frameworks": { "$ref": "common.schema.json#/$defs/string_list" },
+        "version_constraints": { "$ref": "common.schema.json#/$defs/string_list" },
+        "platforms": { "$ref": "common.schema.json#/$defs/string_list" },
+        "conditions": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      },
+      "description": "Required when store_kind=global. A global record without applicability conditions is refused: a reusable statement with no declared limits is not reusable."
+    },
+    "memory_key": {
+      "$ref": "common.schema.json#/$defs/non_empty_string",
+      "description": "Append a revision to an existing memory. Pairs with envelope.expected_revision: without it the write is a create, and the published envelope's expected_revision has nothing to apply to."
+    },
+    "lifecycle": {
+      "$ref": "common.schema.json#/$defs/writable_lifecycle",
+      "description": "Assistant-authored global records default to proposed and do not become governing user preferences by repetition."
+    },
+    "rationale": { "type": "string", "maxLength": 16384 },
+    "tradeoffs": { "type": "string", "maxLength": 16384 },
+    "valid_from": { "$ref": "common.schema.json#/$defs/rfc3339" },
+    "valid_until": { "$ref": "common.schema.json#/$defs/rfc3339" },
+    "links": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "supersedes": { "$ref": "common.schema.json#/$defs/string_list" },
+        "derived_from": { "$ref": "common.schema.json#/$defs/string_list" },
+        "constrains": { "$ref": "common.schema.json#/$defs/string_list" },
+        "proposed_for": { "$ref": "common.schema.json#/$defs/string_list" },
+        "rejected_in": { "$ref": "common.schema.json#/$defs/string_list" }
+      }
+    },
+    "derivative": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["publish_global", "category"],
+      "properties": {
+        "publish_global": { "type": "boolean" },
+        "category": { "$ref": "common.schema.json#/$defs/global_category" },
+        "source_revision": { "type": "integer", "minimum": 1 },
+        "permitted_excerpt": { "type": "string", "maxLength": 16384 }
+      },
+      "description": "The split write: a local application record plus a reusable global record joined by provenance. The global side carries the reusable statement, rationale, applicability and a permitted excerpt only; it never copies project logs, private paths or source wholesale."
+    },
+    "override": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_global_memory_key", "target_revision", "reason", "authority_basis"],
+      "oneOf": [
+        { "required": ["replacement_body"] },
+        { "required": ["exclusion"] }
+      ],
+      "properties": {
+        "target_global_memory_key": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "target_revision": { "type": "integer", "minimum": 1 },
+        "replacement_body": { "type": "string", "minLength": 1, "maxLength": 16384 },
+        "exclusion": { "type": "boolean", "const": true },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "authority_basis": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "validity_interval": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "valid_from": { "$ref": "common.schema.json#/$defs/rfc3339" },
+            "valid_until": { "$ref": "common.schema.json#/$defs/rfc3339" }
+          }
+        }
+      },
+      "description": "The project-exception variant. It writes a project-owned override row and leaves the global revision unchanged. This is the input CLAUDE.md's first implementation slice needs - a shared preference plus one project exception - and it is unreachable while the host refuses the property."
+    },
+    "mandatory": {
+      "type": "boolean",
+      "description": "User authority only. An assistant actor setting it returns kioku.authority_violation. This is an input, not a core-derived field: the caller asks, the core decides whether the asking actor may."
+    },
+    "origin_project_key": {
+      "$ref": "common.schema.json#/$defs/non_empty_string",
+      "description": "Provenance on a global record. Distinct from ownership."
+    },
+    "task_key": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+    "source_anchor": { "$ref": "common.schema.json#/$defs/source_anchor" },
+    "attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["problem", "hypothesis", "actions", "observations", "verdict"],
+      "properties": {
+        "problem": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "hypothesis": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "actions": { "$ref": "common.schema.json#/$defs/string_list" },
+        "observations": { "$ref": "common.schema.json#/$defs/string_list" },
+        "verdict": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "retry_conditions": { "type": "string", "maxLength": 4096 }
+      },
+      "description": "For kind=attempt. A rejected attempt retains why it was rejected so an unchanged retry can be recognized as repetition."
+    },
+    "token_budget": { "$ref": "common.schema.json#/$defs/token_budget" }
+  },
+
+  "allOf": [
+    { "if": { "properties": { "destination": { "properties": { "store_kind": { "const": "global" } }, "required": ["store_kind"] } }, "required": ["destination"] },
+      "then": { "required": ["applicability"] } },
+    { "if": { "required": ["memory_key"] },
+      "then": { "properties": { "envelope": { "required": ["expected_revision"] } } } }
+  ],
+
+  "x-kioku-refusals": {
+    "no_eligible_evidence_link": "kioku.evidence_required",
+    "mandatory_set_by_non_user_actor": "kioku.authority_violation",
+    "global_destination_without_applicability_conditions": "kioku.invalid_request",
+    "project_destination_without_project_key": "kioku.project_binding_unresolved",
+    "expected_revision_stale": "kioku.revision_conflict",
+    "idempotency_key_reused_with_a_different_recomputed_digest": "kioku.idempotency_conflict",
+    "contract_named_property_this_build_does_not_implement": "kioku.unsupported_operation"
+  }
+}

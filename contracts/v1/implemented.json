@@ -1,0 +1,58 @@
+{
+  "$id": "implemented.json",
+  "title": "kioku.tool.v1 build state",
+  "description": "What THIS build implements, as opposed to what the contract names. Build state, not contract text: the schema files are frozen per major version, this file changes every phase. Keeping them apart is why the frozen files' digests stay stable.",
+
+  "rules": {
+    "absent_means_implemented": "A property with no entry here is implemented: it is published to the model and accepted.",
+    "false_means_pruned": "A property listed false is removed from the published schema and from its required list, and supplying it is refused with kioku.unsupported_operation and details.reason='not_implemented_in_this_build'. It is never silently dropped: a caller must not believe an override, a link or an attempt record was stored when nothing was.",
+    "core_route": "false means the Rails core has no route for this tool yet. The host still publishes the tool - the surface stays at six - and reports the core's absence honestly with kioku.source_unavailable rather than pretending the call succeeded.",
+    "flipping_an_entry": "Flipping an entry to true is the gate for the phase that implements it. The conformance suite then requires a tool input case exercising that property to pass end to end, so a flip with no implementation behind it fails."
+  },
+
+  "tools": {
+    "context_search": {
+      "core_route": false,
+      "properties": {}
+    },
+    "context_fetch": {
+      "core_route": false,
+      "properties": {}
+    },
+    "context_related": {
+      "core_route": false,
+      "properties": {}
+    },
+    "context_remember": {
+      "core_route": true,
+      "properties": {
+        "rationale": false,
+        "tradeoffs": false,
+        "valid_from": false,
+        "valid_until": false,
+        "links": false,
+        "derivative": false,
+        "override": false,
+        "origin_project_key": false,
+        "task_key": false,
+        "source_anchor": false,
+        "attempt": false,
+        "token_budget": false
+      },
+      "notes": {
+        "memory_key": "Implemented. Context::Services::Memories::Remember already takes it and pairs it with expected_revision; the host's PERMITTED list was what made it unreachable.",
+        "lifecycle": "Implemented. Remember takes it.",
+        "mandatory": "Implemented. Remember refuses it for a non-user actor with kioku.authority_violation.",
+        "override": "The project-exception variant CLAUDE.md's first implementation slice needs - a shared preference plus one project exception. There is no project override row yet, so it stays false and the slice's phase flips it."
+      }
+    },
+    "context_feedback": {
+      "core_route": false,
+      "properties": {}
+    },
+    "context_task": {
+      "core_route": false,
+      "properties": {}
+    }
+  }
+}

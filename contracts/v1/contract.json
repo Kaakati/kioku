@@ -1,0 +1,104 @@
+{
+  "contract_id": "kioku.tool.v1",
+  "implemented_version": "kioku.tool.v1",
+  "supported_major": 1,
+  "schema_version_pattern": "^kioku\\.tool\\.v1(\\.(0|[1-9][0-9]*))?$",
+
+  "minor_policy": {
+    "rule": "A request is accepted when its MAJOR matches supported_major. Any minor is accepted; minor additions are additive-only.",
+    "unknown_minor_fields": "Accepting a minor the core does not implement does not widen the accepted surface. An unknown property is still refused by the closure rule with kioku.invalid_request, so a caller learns exactly which field this build does not take.",
+    "response_version": "A response carries implemented_version, never an echo of the caller's declared minor. The core does not claim to implement a minor it does not.",
+    "source": "contracts.json request_fields.schema_version; resolves D2"
+  },
+
+  "response_status": {
+    "values": [
+      "success",
+      "partial",
+      "queued",
+      "conflict",
+      "unauthorized_scope",
+      "unavailable_source",
+      "evidence_unavailable",
+      "quota_exhausted",
+      "deadline_expired",
+      "invalid",
+      "internal_error"
+    ],
+    "required_on_every_response": true,
+    "rule": "status is the single discriminator and is present on every response without exception, including transport-level refusals. error.code refines it.",
+    "extension_note": "contracts.json froze nine values and proposed a tenth, 'invalid', for v1.1. Two are added here in v1: 'invalid' for caller-fault refusals and 'internal_error' for a core fault. Mapping a core fault onto any caller-fault value would report a 500 as a client error, which is the defect this resolves. See DECISIONS.md D1.",
+    "source": "contracts.json response_fields.status; errors[] kioku.invalid_request; open_decisions 'the tenth transport-level status'; resolves D1"
+  },
+
+  "request_digest": {
+    "algorithm": "sha256",
+    "wire_format": "^sha256:[0-9a-f]{64}$",
+    "excluded_fields": ["request_id", "deadline_ms", "correlation"],
+    "excluded_at": ["$", "$.envelope"],
+    "canonicalization": "Object keys are sorted lexicographically at every depth; arrays keep their order; values are serialized by JSON type, so the integer 4 and the string \"4\" digest differently. The digest input includes project_key, so the same payload in a different project is a different request.",
+    "authority": "The core RECOMPUTES the digest over the received body and compares it to the asserted value. A caller-asserted digest never decides a durability claim.",
+    "mismatch": "kioku.invalid_request with details.fields = [\"request_digest\"]",
+    "source": "contracts.json request_fields.request_digest; plan 5.2"
+  },
+
+  "idempotency_key": {
+    "max_bytes": 128,
+    "scope": "actor",
+    "rule": "An idempotency key is scoped to the authenticated actor principal. A receipt is looked up by (actor_principal_id, idempotency_key), never by the key alone. Two actors using the same key are two independent requests and neither can observe the other's receipt.",
+    "source": "contracts.json request_fields.idempotency_key 'string (<=128 chars, actor-scoped)'"
+  },
+
+  "core_derived_fields": {
+    "names": [
+      "actor",
+      "actor_principal_id",
+      "principal_id",
+      "authority",
+      "origin_role",
+      "identity_source",
+      "attribution_state",
+      "saved",
+      "claim_support"
+    ],
+    "rule": "None of these names may be declared as a writable request property anywhere in this artifact. They are populated by the core from the authenticated transport and from its own evaluation; a caller that supplies one is refused with kioku.invalid_request by the closure rule below, at whatever depth it was supplied.",
+    "enforcement": "structural, not a runtime name blacklist. A blacklist checked at one depth is bypassed by nesting the name one level deeper, which is exactly the observed defect.",
+    "exemptions": [
+      {
+        "pointer": "tools/context_search.schema.json#/properties/filters/properties/authority",
+        "name": "authority",
+        "reason": "A retrieval predicate over the authority label already recorded on stored rows. It asserts nothing about the caller and grants nothing; it only narrows what is returned."
+      },
+      {
+        "pointer": "tools/context_related.schema.json#/properties/filters/properties/authority",
+        "name": "authority",
+        "reason": "The same retrieval predicate on the traversal route."
+      },
+      {
+        "pointer": "tools/context_task.schema.json#/$defs/criterion/properties/authority",
+        "name": "authority",
+        "reason": "Per-criterion provenance on a task contract. contracts.json task_operations.set_contract requires 'authority: enum(user|assistant|system)' as a declared input and freezes that an assistant actor cannot relax a user-authority criterion; recording which authority a criterion claims is what makes that check possible. The core still refuses the transition."
+      }
+    ],
+    "source": "contracts.json transport_and_actor.actor_identity; labels.authority; errors[] kioku.invalid_request; resolves D6"
+  },
+
+  "closure_rule": {
+    "rule": "Every object in the request surface is closed (additionalProperties:false). An undeclared key at ANY depth is refused with kioku.invalid_request and details.rejected_fields carrying the JSON Pointer of each offending key.",
+    "replaces": "the per-side core-derived name lists, which checked different name sets at different depths and were complete on neither side.",
+    "source": "resolves D6"
+  },
+
+  "loader": {
+    "ref_resolution": "A $ref is replaced by the referenced schema. Sibling keywords on the same object are applied alongside it, and `required` is the UNION of the referenced schema's required and the sibling's. Those are the only two $ref forms used here: a local '#/$defs/x' and a 'common.schema.json#/$defs/x'.",
+    "pruning": "A tool schema published to a model, and the surface a validator accepts, is the resolved schema pruned by implemented.json: a property this build does not implement is removed from properties and from required.",
+    "golden": "conformance/resolved_tools.json carries the fully resolved, pruned result for each of the six tools. Both deploy units assert their loader reproduces it exactly, so two independent loaders cannot drift into two different accepted surfaces."
+  },
+
+  "not_yet_implemented": {
+    "refusal": "kioku.unsupported_operation",
+    "details": { "reason": "not_implemented_in_this_build" },
+    "rule": "A property this contract names but this build does not implement is listed false in implemented.json. It is not published to the model and it is not silently dropped: supplying it is refused by name. Silently ignoring a contract-valid input would let a caller believe an override, a link or an attempt record had been stored when nothing was.",
+    "source": "contracts.json notes; plan 4.1 'do not swallow ... or turn failed saves into successful results'"
+  }
+}

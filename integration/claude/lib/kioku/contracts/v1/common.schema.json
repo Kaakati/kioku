@@ -1,0 +1,342 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "common.schema.json",
+  "title": "kioku.tool.v1 shared definitions",
+  "description": "Every enumeration and reusable object shape the six tools and the two envelopes share. Defined once here; referenced by $ref everywhere else. Nothing in this artifact restates an enum.",
+
+  "$defs": {
+    "non_empty_string": { "type": "string", "minLength": 1 },
+
+    "schema_version": {
+      "type": "string",
+      "pattern": "^kioku\\.tool\\.v1(\\.(0|[1-9][0-9]*))?$",
+      "description": "Matched on MAJOR. Any minor is accepted; minor additions are additive-only."
+    },
+
+    "request_id": {
+      "type": "string",
+      "minLength": 36,
+      "maxLength": 36,
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "UUIDv7, lowercase hex, exactly 36 characters. Caller-generated, unique per attempt, echoed on every response and every receipt. Not an idempotency key: a retry keeps the idempotency key and issues a new request_id. Lowercase is deliberate, so two spellings of one id cannot both be accepted."
+    },
+
+    "deadline_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 30000,
+      "description": "A relative budget, not an absolute timestamp: host and container clocks are not assumed synchronized. The core computes and echoes deadline_at."
+    },
+
+    "request_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "SHA-256 over the canonicalized request body excluding request_id, deadline_ms and correlation. The core recomputes it; the asserted value is checked, never trusted."
+    },
+
+    "idempotency_key": { "type": "string", "minLength": 1, "maxLength": 128 },
+
+    "expected_revision": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Null or absent means create. A stale value returns kioku.revision_conflict carrying the current revision."
+    },
+
+    "token_budget": { "type": "integer", "minimum": 1 },
+
+    "rfc3339": { "type": "string", "minLength": 20 },
+
+    "response_status": {
+      "type": "string",
+      "enum": [
+        "success", "partial", "queued", "conflict", "unauthorized_scope",
+        "unavailable_source", "evidence_unavailable", "quota_exhausted",
+        "deadline_expired", "invalid", "internal_error"
+      ],
+      "description": "The single response discriminator, present on every response. The nine of plan 6.1 plus 'invalid' for a caller fault and 'internal_error' for a core fault; see DECISIONS.md D1. contract.json carries a readable copy and `kioku-contracts verify` asserts the two agree."
+    },
+
+    "store": { "type": "string", "enum": ["project", "global", "both"] },
+    "store_kind": { "type": "string", "enum": ["project", "global"] },
+    "global_category": {
+      "type": "string",
+      "enum": ["coding_style", "engineering_decision", "architecture", "preferred_library"]
+    },
+    "source_view": { "type": "string", "enum": ["current_worktree", "commit", "history"] },
+
+    "retrieval_mode": {
+      "type": "string",
+      "enum": ["exact", "lexical", "related", "solutions"],
+      "description": "exact, lexical and related are the three retrieval mechanisms. 'solutions' is the deprecated alias of the research's mode='solutions' and maps server-side to {mode:lexical, profile:solutions}. semantic and hybrid are permanently absent: embeddings are out of scope, and supplying either returns kioku.unsupported_operation."
+    },
+    "removed_retrieval_modes": {
+      "type": "string",
+      "enum": ["semantic", "hybrid"],
+      "description": "Recorded so a conformance test can assert neither value is accepted anywhere. Not referenced by any tool."
+    },
+    "profile": {
+      "type": "string",
+      "enum": ["mixed", "memory", "code", "evidence", "solutions"]
+    },
+    "order": { "type": "string", "enum": ["relevance", "recorded_at", "valid_from"] },
+
+    "memory_kind": {
+      "type": "string",
+      "enum": ["decision", "constraint", "correction", "attempt", "observation", "procedure", "task_checkpoint"]
+    },
+    "lifecycle": { "type": "string", "enum": ["proposed", "active", "superseded", "retracted"] },
+    "writable_lifecycle": {
+      "type": "string",
+      "enum": ["proposed", "active"],
+      "description": "The only two a caller may name. superseded and retracted are reached by the core through supersession and deletion, never by assertion."
+    },
+    "authority_label": { "type": "string", "enum": ["user", "assistant", "tool", "system", "imported"] },
+    "availability": { "type": "string", "enum": ["available", "redacted", "missing", "expired"] },
+    "applicability_label": {
+      "type": "string",
+      "enum": ["source_checked", "historical", "stale", "environment_mismatch", "unknown"]
+    },
+    "claim_support_value": {
+      "type": "string",
+      "enum": ["unassessed", "supported_in_scope", "contradicted", "inconclusive"]
+    },
+    "override_status": {
+      "type": "string",
+      "enum": ["none", "overridden_in_project", "overriding_global", "mandatory_global"]
+    },
+
+    "edge_kind": {
+      "type": "string",
+      "enum": [
+        "DEFINES", "IMPORTS", "REFERENCES", "MAY_CALL", "RESOLVES_TO", "IMPLEMENTS",
+        "GENERATED_FROM", "CONSUMED_BY", "CONSTRAINS", "PROPOSED_FOR", "REJECTED_IN",
+        "SUPERSEDES", "SUPPORTED_BY", "CONTRADICTS", "ASSESSES", "DERIVED_FROM",
+        "OBSERVED_FRAME", "EXERCISED"
+      ]
+    },
+    "direction": { "type": "string", "enum": ["out", "in", "both"] },
+    "resolution_basis": { "type": "string", "enum": ["syntactic", "convention", "semantic"] },
+
+    "fetch_handle_kind": {
+      "type": "string",
+      "enum": [
+        "memory_revision", "global_record_revision", "evidence", "object", "source_range",
+        "commit", "diff", "observation", "report", "receipt", "packet"
+      ]
+    },
+
+    "evidence_relation": { "type": "string", "enum": ["supports", "contradicts", "context"] },
+    "feedback_action": { "type": "string", "enum": ["dispute", "useful", "irrelevant"] },
+    "feedback_disposition": { "type": "string", "enum": ["open", "resolved", "withdrawn"] },
+
+    "task_op": {
+      "type": "string",
+      "enum": ["get", "set_contract", "record_claim", "propose", "plan_check", "assess", "checkpoint", "close"]
+    },
+    "task_projection": {
+      "type": "string",
+      "enum": ["contract", "criteria", "claims", "candidates", "checks", "observations", "assessments", "checkpoints", "receipts"]
+    },
+    "checkpoint_state": {
+      "type": "string",
+      "enum": ["investigating", "implementing", "checking", "blocked", "interrupted"],
+      "description": "completed_in_scope is deliberately absent: only close can move the projection there."
+    },
+    "claim_materiality": { "type": "string", "enum": ["material", "informational"] },
+    "criterion_authority": { "type": "string", "enum": ["user", "assistant", "system"] },
+    "check_kind": { "type": "string", "enum": ["test", "inspection", "analysis", "review"] },
+    "input_assurance": { "type": "string", "enum": ["immutable_snapshot", "observed_bookends"] },
+    "precondition_kind": {
+      "type": "string",
+      "enum": ["framework_version", "dependency", "schema", "state", "workload", "platform", "constraint"]
+    },
+    "candidate_origin": { "type": "string", "enum": ["local_case", "external_research", "model_synthesis"] },
+    "candidate_verdict": { "type": "string", "enum": ["open", "selected", "rejected"] },
+
+    "facet_dimension": {
+      "type": "string",
+      "enum": ["kind", "store_kind", "category", "language", "lifecycle", "repository", "author_authority"]
+    },
+
+    "coverage_gap_kind": {
+      "type": "string",
+      "enum": [
+        "unindexed_path", "dirty_path", "resolver_hole", "unvalidated_source", "host_disconnected",
+        "traversal_budget", "token_budget", "skipped_file", "unsupported_language", "scope_excluded",
+        "shallow_history", "missing_object"
+      ]
+    },
+    "fallback_reason": {
+      "type": "string",
+      "enum": [
+        "none", "index_generation_lag", "host_disconnected", "traversal_budget_exhausted",
+        "token_budget_exhausted", "highlight_unsupported", "pushdown_unsupported_fallback"
+      ],
+      "description": "Narrowed by the embedding removal: no model outage and no stale-embedding value exists."
+    },
+
+    "string_list": { "type": "array", "items": { "$ref": "#/$defs/non_empty_string" } },
+
+    "typed_handle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/non_empty_string" },
+        "key": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "revision": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    },
+
+    "fetch_handle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/fetch_handle_kind" },
+        "key": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "revision": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    },
+
+    "evidence_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 1,
+      "oneOf": [
+        { "required": ["evidence_key"] },
+        { "required": ["object_key"] },
+        { "required": ["event_key"] }
+      ],
+      "properties": {
+        "evidence_key": { "$ref": "#/$defs/non_empty_string" },
+        "object_key": { "$ref": "#/$defs/non_empty_string" },
+        "event_key": { "$ref": "#/$defs/non_empty_string" }
+      },
+      "description": "Exactly one of evidence_key, object_key or event_key. A well-formed ref this build cannot resolve is NOT a malformed request: it is reported per entry in data.evidence_rejected with a named reason, and only an empty eligible set fails the call with kioku.evidence_required."
+    },
+
+    "evidence_link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "relation"],
+      "properties": {
+        "ref": { "$ref": "#/$defs/evidence_ref" },
+        "relation": { "$ref": "#/$defs/evidence_relation" }
+      }
+    },
+
+    "evidence_links": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": { "$ref": "#/$defs/evidence_link" }
+    },
+
+    "source_anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository_key", "path", "content_hash", "hash_algorithm"],
+      "properties": {
+        "repository_key": { "$ref": "#/$defs/non_empty_string" },
+        "worktree_key": { "type": ["string", "null"] },
+        "path": { "$ref": "#/$defs/non_empty_string" },
+        "content_hash": { "$ref": "#/$defs/non_empty_string" },
+        "hash_algorithm": { "type": "string", "enum": ["sha256"] },
+        "byte_range": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["byte_start", "byte_end"],
+          "properties": {
+            "byte_start": { "type": "integer", "minimum": 0 },
+            "byte_end": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "line_range": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["line_start", "line_end"],
+          "properties": {
+            "line_start": { "type": "integer", "minimum": 1 },
+            "line_end": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "commit_oid": { "type": ["string", "null"] },
+        "source_view": { "$ref": "#/$defs/source_view" }
+      },
+      "description": "The bounded source_anchor schema contracts.json lists as NOT FROZEN. This is its first version; widening it is a minor addition."
+    },
+
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["store"],
+      "properties": {
+        "store": { "$ref": "#/$defs/store" },
+        "project_key": {
+          "$ref": "#/$defs/non_empty_string",
+          "description": "Required when store is project or both. A missing or ambiguous binding returns kioku.project_binding_unresolved and never falls back to global."
+        },
+        "repository_key": { "type": ["string", "null"] },
+        "worktree_key": { "type": ["string", "null"] },
+        "task_key": { "type": ["string", "null"] },
+        "cross_project_keys": { "$ref": "#/$defs/string_list" },
+        "global_categories": { "type": "array", "items": { "$ref": "#/$defs/global_category" } },
+        "source_view": { "$ref": "#/$defs/source_view" }
+      }
+    },
+
+    "correlation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "session_id": { "type": "string" },
+        "agent_key": { "type": "string" },
+        "provider_agent_id": { "type": "string" },
+        "parent_agent_key": { "type": "string" },
+        "agent_run_id": { "type": "string" },
+        "prompt_id": { "type": "string" },
+        "tool_use_id": { "type": "string" },
+        "worktree_id": { "type": "string" },
+        "context_epoch": { "type": "string" }
+      },
+      "description": "Correlation hints only. The core records identity_source and leaves attribution_state unresolved when the join cannot be established; it never infers identity from timing or process id. Closed on purpose: this is the nesting an identity field would otherwise be smuggled in through."
+    },
+
+    "client": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "$ref": "#/$defs/non_empty_string" },
+        "version": { "$ref": "#/$defs/non_empty_string" }
+      }
+    },
+
+    "envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "request_id", "deadline_ms", "scope"],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schema_version" },
+        "request_id": { "$ref": "#/$defs/request_id" },
+        "deadline_ms": { "$ref": "#/$defs/deadline_ms" },
+        "scope": { "$ref": "#/$defs/scope" },
+        "idempotency_key": { "$ref": "#/$defs/idempotency_key" },
+        "request_digest": { "$ref": "#/$defs/request_digest" },
+        "expected_revision": { "$ref": "#/$defs/expected_revision" },
+        "correlation": { "$ref": "#/$defs/correlation" },
+        "client": { "$ref": "#/$defs/client" },
+        "trace_id": { "type": "string" }
+      },
+      "description": "The common request envelope. A read tool requires the first four; a mutating tool adds idempotency_key and request_digest to its own required list through a $ref sibling."
+    },
+
+    "mutation_required": {
+      "type": "array",
+      "const": ["schema_version", "request_id", "deadline_ms", "scope", "idempotency_key", "request_digest"],
+      "description": "The required list a mutating tool applies to its envelope. Recorded here so the six tools do not each restate it."
+    }
+  }
+}

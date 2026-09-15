@@ -1,0 +1,38 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# The contract artifact's build gate.
+#
+#   contracts/bin/kioku-contracts sync     regenerate the derived files and both mirrors
+#   contracts/bin/kioku-contracts verify   fail if anything committed is stale or edited
+#   contracts/bin/kioku-contracts digest   print the artifact digest
+#
+# `verify` exits non-zero and names every offending file. Run it in CI and as a
+# pre-commit hook: it is what stops a contract change reaching one deploy unit
+# and not the other.
+
+require_relative "../lib/kioku_contracts/sync"
+
+command = ARGV[0] || "verify"
+
+case command
+when "sync"
+  count = KiokuContracts::Sync.sync
+  puts "synced #{count} contract files to #{KiokuContracts::MIRRORS.keys.join(' and ')}"
+  puts KiokuContracts.manifest.fetch("artifact_digest")
+when "verify"
+  problems = KiokuContracts::Sync.verify
+  if problems.empty?
+    puts "contract artifact is in sync (#{KiokuContracts.manifest.fetch('artifact_digest')})"
+  else
+    problems.each { |problem| warn(problem) }
+    warn("\n#{problems.size} problem(s). The source of truth is contracts/v1/; " \
+         "edit there and run `contracts/bin/kioku-contracts sync`.")
+    exit 1
+  end
+when "digest"
+  puts KiokuContracts.manifest.fetch("artifact_digest")
+else
+  warn("usage: kioku-contracts [sync|verify|digest]")
+  exit 2
+end

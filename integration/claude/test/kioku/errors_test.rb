@@ -29,10 +29,10 @@ class KiokuErrorsTest < Minitest::Test
     kioku.internal_error
   ].freeze
 
-  FROZEN_STATUSES = %w[
-    success partial queued conflict unauthorized_scope
-    unavailable_source evidence_unavailable quota_exhausted deadline_expired
-  ].freeze
+  # The status each wire name resolves to, and the full status enum, are asserted
+  # against contracts/v1/errors.json in contract_error_registry_test.rb. Restating
+  # them here would be a third hand transcription of the table the artifact exists
+  # to hold, and a transcription cannot disagree with itself.
 
   def test_should_register_exactly_the_frozen_wire_names_when_the_registry_is_listed
     assert_equal FROZEN_WIRE_NAMES.sort, Kioku::Errors.wire_names.sort
@@ -48,17 +48,14 @@ class KiokuErrorsTest < Minitest::Test
     assert_raises(KeyError) { Kioku::Errors.fetch("kioku.made_up_condition") }
   end
 
-  def test_should_expose_exactly_the_nine_response_statuses_when_statuses_are_listed
-    assert_equal FROZEN_STATUSES.sort, Kioku::Errors.statuses.sort
-  end
+  # D1. status is "the single discriminator" and `response_fields.status` is
+  # required:true, so no registered code may resolve to nothing: a code with no
+  # status forces a caller to branch on `status || error.code`, which is the
+  # inconsistent branching the contract warns about.
+  def test_should_resolve_every_registered_code_to_a_response_status
+    statusless = Kioku::Errors.wire_names.reject { |name| Kioku::Errors.fetch(name).status }
 
-  def test_should_map_every_registered_code_to_a_frozen_status_or_to_none
-    Kioku::Errors.wire_names.each do |name|
-      status = Kioku::Errors.fetch(name).status
-      next if status.nil?
-
-      assert_includes FROZEN_STATUSES, status, "#{name} maps to an unfrozen status #{status.inspect}"
-    end
+    assert_empty statusless, "these codes resolve to no response status at all"
   end
 
   # "queued means durable host enqueue only" [contracts: errors kioku.queued; plan invariant 2].
@@ -81,10 +78,20 @@ class KiokuErrorsTest < Minitest::Test
     assert_equal "deadline_expired", Kioku::Errors.fetch("kioku.deadline_exceeded").status
   end
 
-  # "for v1 this returns HTTP/MCP-level error with code kioku.invalid_request and no
-  # status field" [contracts: errors kioku.invalid_request; open_decisions "tenth status"].
-  def test_should_carry_no_response_status_for_invalid_request_because_v1_has_no_invalid_status
-    assert_nil Kioku::Errors.fetch("kioku.invalid_request").status
+  # D1. contracts.json contradicts itself here: response_fields.status is
+  # required:true while the errors[] prose says v1 returns "no status field" and
+  # proposes a tenth value "invalid" for v1.1. The required:true sentence is the
+  # unambiguous one and the prose is self-described as a proposal, so `invalid` is
+  # taken in v1 — there is no client to break, and the alternative made a core 500
+  # indistinguishable from a malformed request on the discriminator.
+  def test_should_carry_the_invalid_status_for_invalid_request_so_a_caller_branches_on_one_field
+    assert_equal "invalid", Kioku::Errors.fetch("kioku.invalid_request").status
+  end
+
+  # The half of D1 that no caller-fault value can carry honestly: reporting a core
+  # fault as `conflict` or `unauthorized_scope` is the same lie relocated.
+  def test_should_carry_its_own_status_for_internal_error_rather_than_a_caller_fault_value
+    assert_equal "internal_error", Kioku::Errors.fetch("kioku.internal_error").status
   end
 
   def test_should_map_every_conflict_family_code_to_the_conflict_status

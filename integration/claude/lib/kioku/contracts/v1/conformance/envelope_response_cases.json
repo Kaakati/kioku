@@ -1,0 +1,333 @@
+{
+  "$id": "conformance/envelope_response_cases.json",
+  "title": "Common response envelope conformance cases",
+  "description": "Each case is a golden response, read in both directions. The core asserts that Context::Serialization::Response, given `render`, PRODUCES `wire`. The host asserts that Kioku::Envelope::ResponseParser, given `wire`, reaches `host_expect`. A case with no `render` is a hostile payload the core would never emit; it is host-only and says so in `sides`.",
+
+  "volatile_pointers": [
+    "/server_time",
+    "/limits/deadline_at",
+    "/limits/elapsed_ms",
+    "/generation_vector/observed_at"
+  ],
+  "volatile_note": "The core comparison asserts these keys are present and of the declared type, not equal to a literal. Everything else is compared exactly, so an omitted status or a flipped retryable is a failure rather than a rounding difference.",
+
+  "wire_base": {
+    "schema_version": "kioku.tool.v1",
+    "request_id": "018f3a2b-7c1d-7e4a-9b2c-3d4e5f6a7b8c",
+    "status": "success",
+    "error": null,
+    "data": null,
+    "generation_vector": {
+      "canonical_generation": 0,
+      "policy_generation": 0,
+      "global_generation": 0,
+      "index_generation": 0,
+      "source_epoch": 0,
+      "deletion_epoch": 0,
+      "host_link_state": "disconnected",
+      "observed_at": "2026-09-15T00:00:00.000Z"
+    },
+    "coverage": {
+      "state": "complete_for_declared_set",
+      "declared_input_set": {},
+      "counts": { "considered": 0, "returned": 0, "truncated_at": null },
+      "gaps": [],
+      "completeness_label": "known_within_indexed_coverage"
+    },
+    "continuation": null,
+    "receipt": null,
+    "limits": {
+      "deadline_at": "2026-09-15T00:00:03.000Z",
+      "elapsed_ms": 1,
+      "candidate_limit": null,
+      "returned": null,
+      "truncated": false
+    },
+    "warnings": [],
+    "server_time": "2026-09-15T00:00:00.000Z"
+  },
+
+  "cases": [
+    {
+      "id": "a_successful_read_carries_status_success_and_a_null_error",
+      "why": "The baseline. error is null only on success.",
+      "sides": ["host", "core"],
+      "render": { "status": "success" },
+      "wire_patch": {},
+      "host_expect": { "outcome": "accepted", "status": "success" },
+      "red_today": []
+    },
+
+    {
+      "id": "a_malformed_request_answers_status_invalid",
+      "why": "contracts.json proposed a tenth status value for exactly this and left v1 with none, so the core omitted the field and the host demanded it. A caller now branches on one field for every outcome.",
+      "sides": ["host", "core"],
+      "render": { "status": "invalid", "error_code": "kioku.invalid_request", "generation_vector": null },
+      "wire_patch": {
+        "status": "invalid",
+        "generation_vector": null,
+        "error": {
+          "code": "kioku.invalid_request",
+          "message": "the request envelope failed contract validation",
+          "retryable": false,
+          "retry_after_ms": null,
+          "details": { "fields": ["request_id"] }
+        }
+      },
+      "host_expect": { "outcome": "accepted", "status": "invalid", "code": "kioku.invalid_request" },
+      "red_today": ["host", "core"],
+      "guards": "D1"
+    },
+    {
+      "id": "a_core_fault_answers_status_internal_error_not_a_caller_fault",
+      "why": "The sharpest half of D1: with no status, a core 500 was reported to the model as kioku.invalid_request, telling it to fix a request that was fine. internal_error is a status of its own because no caller-fault value can carry it honestly.",
+      "sides": ["host", "core"],
+      "render": { "status": "internal_error", "error_code": "kioku.internal_error" },
+      "wire_patch": {
+        "status": "internal_error",
+        "error": {
+          "code": "kioku.internal_error",
+          "message": "an unexpected internal failure occurred",
+          "retryable": false,
+          "retry_after_ms": null,
+          "details": {}
+        }
+      },
+      "host_expect": { "outcome": "accepted", "status": "internal_error", "code": "kioku.internal_error" },
+      "red_today": ["host", "core"],
+      "guards": "D1"
+    },
+    {
+      "id": "the_internal_error_message_is_redacted_on_the_wire",
+      "why": "The raised text stays on the server log. A response that echoes it leaks content or credentials to the model.",
+      "sides": ["core"],
+      "render": { "status": "internal_error", "error_code": "kioku.internal_error", "raised_message": "PG::UniqueViolation on idempotency_key=customer-secret-42" },
+      "wire_patch": {
+        "status": "internal_error",
+        "error": {
+          "code": "kioku.internal_error",
+          "message": "an unexpected internal failure occurred",
+          "retryable": false,
+          "retry_after_ms": null,
+          "details": {}
+        }
+      },
+      "red_today": []
+    },
+    {
+      "id": "an_unresolved_handle_answers_status_unauthorized_scope_with_no_data",
+      "why": "Not-found and wrong-scope are one code so they are indistinguishable. Giving them the same status keeps them indistinguishable on the discriminator too, and the caller's branch is identical either way.",
+      "sides": ["host", "core"],
+      "render": { "status": "unauthorized_scope", "error_code": "kioku.handle_unresolved" },
+      "wire_patch": {
+        "status": "unauthorized_scope",
+        "error": {
+          "code": "kioku.handle_unresolved",
+          "message": "the handle did not resolve",
+          "retryable": false,
+          "retry_after_ms": null,
+          "details": {}
+        }
+      },
+      "host_expect": { "outcome": "accepted", "status": "unauthorized_scope", "code": "kioku.handle_unresolved" },
+      "red_today": ["host", "core"],
+      "guards": "D1"
+    },
+    {
+      "id": "an_unsupported_major_answers_status_invalid_with_a_null_generation_vector",
+      "why": "Returned before any scope resolution, so there is no generation vector to report. Reporting zeros instead would be an invented observation.",
+      "sides": ["host", "core"],
+      "render": { "status": "invalid", "error_code": "kioku.unsupported_schema_version", "generation_vector": null },
+      "wire_patch": {
+        "status": "invalid",
+        "generation_vector": null,
+        "error": {
+          "code": "kioku.unsupported_schema_version",
+          "message": "this core implements kioku.tool.v1",
+          "retryable": false,
+          "retry_after_ms": null,
+          "details": { "supported": ["kioku.tool.v1"] }
+        }
+      },
+      "host_expect": { "outcome": "accepted", "status": "invalid", "code": "kioku.unsupported_schema_version" },
+      "red_today": ["host", "core"],
+      "guards": "D1"
+    },
+
+    {
+      "id": "a_queued_write_is_retryable_and_carries_its_durable_spool_receipt",
+      "why": "Replay after reconnect returns the same idempotency receipt, so re-issuing is the contract's own mechanism and retryable must say so. The core said false and the host said true, which is a caller either giving up on a write that is waiting for it, or not.",
+      "sides": ["host", "core"],
+      "render": {
+        "status": "queued",
+        "error_code": "kioku.queued",
+        "data": {
+          "saved": false,
+          "spool": { "spool_entry_id": "sp-1", "producer_key": "host-a", "producer_epoch": 3, "producer_sequence": 17 }
+        }
+      },
+      "wire_patch": {
+        "status": "queued",
+        "data": {
+          "saved": false,
+          "spool": { "spool_entry_id": "sp-1", "producer_key": "host-a", "producer_epoch": 3, "producer_sequence": 17 }
+        },
+        "error": {
+          "code": "kioku.queued",
+          "message": "the write was durably enqueued on the host spool",
+          "retryable": true,
+          "retry_after_ms": null,
+          "details": {}
+        }
+      },
+      "host_expect": { "outcome": "accepted", "status": "queued", "code": "kioku.queued", "retryable": true },
+      "red_today": ["core"],
+      "guards": "D5"
+    },
+    {
+      "id": "a_queued_response_without_a_spool_receipt_is_refused_by_the_host",
+      "why": "queued means durable host enqueue and nothing else. Without the spool entry there is no evidence anything was enqueued, and the model would be told its write is safe.",
+      "sides": ["host"],
+      "wire_patch": {
+        "status": "queued",
+        "data": { "saved": false },
+        "error": { "code": "kioku.queued", "message": "enqueued", "retryable": true, "retry_after_ms": null, "details": {} }
+      },
+      "host_expect": { "outcome": "refused", "code": "kioku.invalid_request" },
+      "red_today": []
+    },
+    {
+      "id": "a_queued_response_reporting_saved_true_is_refused_by_the_host",
+      "why": "Only canonical commit means saved. This is the single most load-bearing refusal on the host: it is what stops a durable-enqueue answer being rendered to the model as a save.",
+      "sides": ["host"],
+      "wire_patch": {
+        "status": "queued",
+        "data": {
+          "saved": true,
+          "spool": { "spool_entry_id": "sp-1", "producer_key": "host-a", "producer_epoch": 3, "producer_sequence": 17 }
+        },
+        "error": { "code": "kioku.queued", "message": "enqueued", "retryable": true, "retry_after_ms": null, "details": {} }
+      },
+      "host_expect": { "outcome": "refused", "code": "kioku.invalid_request" },
+      "red_today": []
+    },
+    {
+      "id": "a_deadline_expired_response_reporting_saved_true_is_refused_by_the_host",
+      "why": "A deadline expiry is never reported as a save. The outcome is indeterminate by design and the caller learns it by retrying with the same key and digest.",
+      "sides": ["host"],
+      "wire_patch": {
+        "status": "deadline_expired",
+        "data": { "saved": true },
+        "error": { "code": "kioku.deadline_exceeded", "message": "the deadline elapsed", "retryable": true, "retry_after_ms": null, "details": {} }
+      },
+      "host_expect": { "outcome": "refused", "code": "kioku.invalid_request" },
+      "red_today": []
+    },
+    {
+      "id": "an_unauthorized_scope_response_carrying_data_is_refused_by_the_host",
+      "why": "Denial is uniform and must not disclose whether the target exists in another scope. A payload alongside the denial is that disclosure.",
+      "sides": ["host"],
+      "wire_patch": {
+        "status": "unauthorized_scope",
+        "data": { "items": [] },
+        "error": { "code": "kioku.scope_denied", "message": "denied", "retryable": false, "retry_after_ms": null, "details": {} }
+      },
+      "host_expect": { "outcome": "refused", "code": "kioku.invalid_request" },
+      "red_today": []
+    },
+
+    {
+      "id": "a_partial_result_keeps_its_data_and_enumerates_its_gaps",
+      "why": "partial is not a failure. The companion that stops the refusal cases above being satisfied by refusing every non-success response.",
+      "sides": ["host", "core"],
+      "render": {
+        "status": "partial",
+        "error_code": "kioku.partial_result",
+        "data": { "items": [] },
+        "coverage": {
+          "state": "partial",
+          "declared_input_set": {},
+          "counts": { "considered": 40, "returned": 10, "truncated_at": 10 },
+          "gaps": [{ "kind": "token_budget", "detail": "packet budget reached", "count": 4 }],
+          "completeness_label": "known_within_indexed_coverage"
+        }
+      },
+      "wire_patch": {
+        "status": "partial",
+        "data": { "items": [] },
+        "coverage": {
+          "state": "partial",
+          "declared_input_set": {},
+          "counts": { "considered": 40, "returned": 10, "truncated_at": 10 },
+          "gaps": [{ "kind": "token_budget", "detail": "packet budget reached", "count": 4 }],
+          "completeness_label": "known_within_indexed_coverage"
+        },
+        "error": { "code": "kioku.partial_result", "message": "some declared portion could not be served", "retryable": false, "retry_after_ms": null, "details": {} }
+      },
+      "host_expect": { "outcome": "accepted", "status": "partial", "code": "kioku.partial_result" },
+      "red_today": []
+    },
+
+    {
+      "id": "a_response_that_omits_status_is_refused_by_the_host",
+      "why": "This is what stops D1 being 'resolved' in the wrong direction. If someone makes status optional again to satisfy a core that omits it, this case goes red.",
+      "sides": ["host"],
+      "wire_delete": ["status"],
+      "wire_patch": {
+        "error": { "code": "kioku.invalid_request", "message": "bad request", "retryable": false, "retry_after_ms": null, "details": {} }
+      },
+      "host_expect": { "outcome": "refused", "code": "kioku.invalid_request" },
+      "red_today": [],
+      "guards": "D1"
+    },
+    {
+      "id": "a_success_response_carrying_an_error_body_is_refused_by_the_host",
+      "why": "error is null on success and present on everything else. A success with an error body means the core cannot tell the caller what happened.",
+      "sides": ["host"],
+      "wire_patch": {
+        "error": { "code": "kioku.partial_result", "message": "partial", "retryable": false, "retry_after_ms": null, "details": {} }
+      },
+      "host_expect": { "outcome": "refused", "code": "kioku.invalid_request" },
+      "red_today": []
+    },
+    {
+      "id": "a_non_success_response_without_an_error_body_is_refused_by_the_host",
+      "why": "Every status except success carries an error the caller can branch on.",
+      "sides": ["host"],
+      "wire_patch": { "status": "conflict", "error": null },
+      "host_expect": { "outcome": "refused", "code": "kioku.invalid_request" },
+      "red_today": []
+    },
+    {
+      "id": "an_error_code_outside_the_registry_is_refused_by_the_host",
+      "why": "An invented condition must not reach a caller under a plausible-looking name.",
+      "sides": ["host"],
+      "wire_patch": {
+        "status": "conflict",
+        "error": { "code": "kioku.write_rejected", "message": "nope", "retryable": false, "retry_after_ms": null, "details": {} }
+      },
+      "host_expect": { "outcome": "refused", "code": "kioku.invalid_request" },
+      "red_today": []
+    },
+    {
+      "id": "an_error_code_carrying_the_wrong_status_is_refused_by_the_host",
+      "why": "The registry binds each code to exactly one status. A core that pairs them freely could report a denial as a conflict and a caller would retry a scope it will never be granted.",
+      "sides": ["host"],
+      "wire_patch": {
+        "status": "conflict",
+        "error": { "code": "kioku.scope_denied", "message": "denied", "retryable": false, "retry_after_ms": null, "details": {} }
+      },
+      "host_expect": { "outcome": "refused", "code": "kioku.invalid_request" },
+      "red_today": []
+    },
+    {
+      "id": "a_response_echoing_a_different_request_id_is_refused_by_the_host",
+      "why": "request_id is echoed on every response and every receipt. A mismatched echo means the answer belongs to another attempt.",
+      "sides": ["host"],
+      "wire_patch": { "request_id": "018f3a2b-7c1d-7e4a-9b2c-000000000000" },
+      "expected_request_id": "018f3a2b-7c1d-7e4a-9b2c-3d4e5f6a7b8c",
+      "host_expect": { "outcome": "refused", "code": "kioku.invalid_request" },
+      "red_today": []
+    }
+  ]
+}

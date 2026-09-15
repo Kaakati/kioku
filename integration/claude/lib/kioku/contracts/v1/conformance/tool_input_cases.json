@@ -1,0 +1,369 @@
+{
+  "$id": "conformance/tool_input_cases.json",
+  "title": "Tool input conformance cases",
+  "description": "Driven through EACH side's real tool validator: Kioku::Mcp::Validators::* on the host and the Rails request boundary in the core. Both must reach the same outcome and the same wire code. `service_expect` names an additional obligation on the core's use case, because some of these divergences are only visible past validation.",
+
+  "patch_semantics": "body_patch is merged over the named base body one level deep; a nested object replaces outright. body_delete removes keys entirely. envelope_patch and envelope_delete apply the same way to the body's envelope.",
+
+  "base_envelopes": {
+    "read": {
+      "schema_version": "kioku.tool.v1",
+      "request_id": "018f3a2b-7c1d-7e4a-9b2c-3d4e5f6a7b8c",
+      "deadline_ms": 3000,
+      "scope": { "store": "project", "project_key": "kioku" }
+    },
+    "mutation": {
+      "schema_version": "kioku.tool.v1",
+      "request_id": "018f3a2b-7c1d-7e4a-9b2c-3d4e5f6a7b8c",
+      "deadline_ms": 5000,
+      "scope": { "store": "project", "project_key": "kioku" },
+      "idempotency_key": "remember-2026-09-15-0001",
+      "request_digest": "sha256:3b0c4f1e9a7d2c5b8e6f0a1d4c7b2e5f8a9d0c3b6e1f4a7d2c5b8e0f3a6d9c1b"
+    }
+  },
+
+  "base_bodies": {
+    "remember_project": {
+      "tool": "context_remember",
+      "envelope": "mutation",
+      "body": {
+        "kind": "decision",
+        "destination": { "store_kind": "project", "project_key": "kioku" },
+        "title": "Use template0 for the application database",
+        "body": "The ParadeDB image seeds template1 with nine extensions, so the application database must be created from template0.",
+        "evidence": [{ "ref": { "object_key": "obj-compose-yml" }, "relation": "supports" }]
+      }
+    },
+    "remember_global": {
+      "tool": "context_remember",
+      "envelope": "mutation",
+      "body": {
+        "kind": "decision",
+        "destination": { "store_kind": "global", "category": "engineering_decision" },
+        "title": "Prefer an explicit database template",
+        "body": "Create application databases from a known template rather than inheriting whatever the image seeded.",
+        "evidence": [{ "ref": { "object_key": "obj-compose-yml" }, "relation": "supports" }],
+        "applicability": { "languages": ["ruby"], "conditions": "PostgreSQL images that preload extensions into template1" }
+      }
+    },
+    "search_lexical": {
+      "tool": "context_search",
+      "envelope": "read",
+      "body": { "mode": "lexical", "query": "database template" }
+    },
+    "related_callers": {
+      "tool": "context_related",
+      "envelope": "read",
+      "body": {
+        "seeds": [{ "kind": "symbol_key", "key": "Context::Services::Memories::Remember#call" }],
+        "edge_kinds": ["MAY_CALL"],
+        "direction": "in"
+      }
+    },
+    "fetch_one": {
+      "tool": "context_fetch",
+      "envelope": "read",
+      "body": { "handles": [{ "kind": "memory_revision", "key": "mem-1", "revision": 1 }] }
+    },
+    "feedback_dispute": {
+      "tool": "context_feedback",
+      "envelope": "mutation",
+      "body": {
+        "target": { "memory_key": "mem-1", "revision": 1 },
+        "action": "dispute",
+        "reason": "The cited compose file no longer sets POSTGRES_DB."
+      }
+    },
+    "task_checkpoint": {
+      "tool": "context_task",
+      "envelope": "mutation",
+      "body": {
+        "op": "checkpoint",
+        "task_key": "task-1",
+        "contract_revision": 1,
+        "state": "implementing",
+        "summary": "Envelope decoder now enforces UUIDv7."
+      }
+    }
+  },
+
+  "cases": [
+    {
+      "id": "a_minimal_project_memory_is_accepted",
+      "why": "The baseline every remember refusal is measured against.",
+      "base": "remember_project",
+      "expect": { "outcome": "accepted" },
+      "red_today": []
+    },
+    {
+      "id": "memory_key_with_expected_revision_is_accepted",
+      "why": "The published envelope accepts expected_revision, but with memory_key refused no caller could name the memory it applies to. Appending a revision was unreachable through the published surface.",
+      "base": "remember_project",
+      "body_patch": { "memory_key": "mem-1" },
+      "envelope_patch": { "expected_revision": 3 },
+      "expect": { "outcome": "accepted" },
+      "red_today": ["host"],
+      "guards": "D7"
+    },
+    {
+      "id": "memory_key_without_expected_revision_is_refused",
+      "why": "Naming an existing memory without declaring the revision you observed is a blind append: the head could have moved and the write would not conflict.",
+      "base": "remember_project",
+      "body_patch": { "memory_key": "mem-1" },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "expected_revision" },
+      "red_today": ["host", "core"]
+    },
+    {
+      "id": "a_proposed_lifecycle_is_accepted",
+      "why": "Assistant-authored global records default to proposed and must be able to say so. The core already takes lifecycle; only the host's permitted list made it unreachable.",
+      "base": "remember_global",
+      "body_patch": { "lifecycle": "proposed" },
+      "expect": { "outcome": "accepted" },
+      "red_today": ["host"],
+      "guards": "D7"
+    },
+    {
+      "id": "a_retracted_lifecycle_is_refused",
+      "why": "superseded and retracted are reached by the core through supersession and deletion. A caller asserting them would retract a record by writing a word.",
+      "base": "remember_global",
+      "body_patch": { "lifecycle": "retracted" },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "lifecycle" },
+      "red_today": ["host", "core"]
+    },
+    {
+      "id": "mandatory_is_an_accepted_input_and_the_core_decides_the_authority",
+      "why": "mandatory is user authority only, which is a decision the core makes about the actor - not a reason to refuse the field at the schema. Refusing it at the host made kioku.authority_violation unreachable.",
+      "base": "remember_global",
+      "body_patch": { "mandatory": true },
+      "expect": { "outcome": "accepted" },
+      "service_expect": { "non_user_actor": "kioku.authority_violation" },
+      "red_today": ["host"],
+      "guards": "D7"
+    },
+    {
+      "id": "the_project_override_variant_is_refused_by_name_while_unimplemented",
+      "why": "override is what CLAUDE.md's first implementation slice needs. Until implemented.json flips it, the refusal names the field and says why, so a caller never believes an exception was recorded. Flipping the entry turns this case into an acceptance.",
+      "base": "remember_project",
+      "body_patch": {
+        "override": {
+          "target_global_memory_key": "glob-1",
+          "target_revision": 2,
+          "replacement_body": "This project pins the template explicitly.",
+          "reason": "Local exception to the shared preference.",
+          "authority_basis": "user instruction in this project"
+        }
+      },
+      "expect": {
+        "outcome": "refused",
+        "code": "kioku.unsupported_operation",
+        "details": { "reason": "not_implemented_in_this_build" },
+        "field": "override"
+      },
+      "red_today": ["host", "core"],
+      "guards": "D7",
+      "flips_with": "implemented.json tools.context_remember.properties.override"
+    },
+    {
+      "id": "an_evidence_key_ref_is_a_valid_shape",
+      "why": "The contract's ref is {evidence_key|object_key|event_key}. The core refused anything but object_key with kioku.invalid_request, which told a caller its request was malformed when it was exactly what the contract names.",
+      "base": "remember_project",
+      "body_patch": {
+        "evidence": [
+          { "ref": { "object_key": "obj-compose-yml" }, "relation": "supports" },
+          { "ref": { "evidence_key": "ev-not-in-this-build" }, "relation": "context" }
+        ]
+      },
+      "expect": { "outcome": "accepted" },
+      "service_expect": {
+        "status": "success",
+        "evidence_accepted": [{ "ref": { "object_key": "obj-compose-yml" }, "relation": "supports" }],
+        "evidence_rejected": [{ "ref": { "evidence_key": "ev-not-in-this-build" }, "reason": "not_found" }],
+        "note": "A well-formed ref this build cannot resolve is reported per entry, never as a malformed request and never silently dropped from the eligibility count."
+      },
+      "red_today": ["core"],
+      "guards": "D4"
+    },
+    {
+      "id": "an_evidence_set_with_no_eligible_link_fails_the_write",
+      "why": "Only an EMPTY eligible set fails, and it fails with kioku.evidence_required rather than kioku.invalid_request. The companion that stops the case above being satisfied by accepting every ref.",
+      "base": "remember_project",
+      "body_patch": {
+        "evidence": [{ "ref": { "evidence_key": "ev-not-in-this-build" }, "relation": "supports" }]
+      },
+      "expect": { "outcome": "accepted" },
+      "service_expect": { "code": "kioku.evidence_required" },
+      "red_today": ["core"],
+      "guards": "D4"
+    },
+    {
+      "id": "an_evidence_ref_naming_two_keys_is_refused",
+      "why": "Exactly one of the three. Two keys is an ambiguous reference the core would have to guess at, and the host accepted any non-empty object.",
+      "base": "remember_project",
+      "body_patch": {
+        "evidence": [{ "ref": { "object_key": "obj-1", "event_key": "ev-1" }, "relation": "supports" }]
+      },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "evidence" },
+      "red_today": ["host"],
+      "guards": "D4"
+    },
+    {
+      "id": "an_empty_evidence_ref_is_refused",
+      "why": "An empty object names nothing.",
+      "base": "remember_project",
+      "body_patch": { "evidence": [{ "ref": {}, "relation": "supports" }] },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "evidence" },
+      "red_today": []
+    },
+    {
+      "id": "an_empty_evidence_array_is_evidence_required_not_invalid_request",
+      "why": "The contract names a dedicated code for a write that supplied no evidence link, and a caller branches on it differently: it must add evidence, not fix its request.",
+      "base": "remember_project",
+      "body_patch": { "evidence": [] },
+      "expect": { "outcome": "refused", "code": "kioku.evidence_required" },
+      "red_today": []
+    },
+
+    {
+      "id": "a_global_destination_without_applicability_is_refused",
+      "why": "A reusable statement with no declared limits is not reusable.",
+      "base": "remember_global",
+      "body_delete": ["applicability"],
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "applicability" },
+      "red_today": []
+    },
+    {
+      "id": "a_project_destination_without_a_project_key_is_binding_unresolved",
+      "why": "An absent binding is never read as permission to write globally.",
+      "base": "remember_project",
+      "body_patch": { "destination": { "store_kind": "project" } },
+      "expect": { "outcome": "refused", "code": "kioku.project_binding_unresolved" },
+      "red_today": []
+    },
+    {
+      "id": "a_caller_supplied_claim_support_is_refused",
+      "why": "A save records a conclusion; it never establishes support. claim_support is core-derived and has no input property anywhere in the artifact.",
+      "base": "remember_project",
+      "body_patch": { "claim_support": "supported_in_scope" },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "rejected_fields": ["/claim_support"] },
+      "red_today": ["core"],
+      "guards": "D6"
+    },
+    {
+      "id": "a_caller_supplied_authority_nested_in_destination_is_refused",
+      "why": "The bypass a top-level name check misses. Closure at every depth is what refuses it; a list of names checked at one level is not.",
+      "base": "remember_project",
+      "body_patch": { "destination": { "store_kind": "project", "project_key": "kioku", "authority": "user" } },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "rejected_fields": ["/destination/authority"] },
+      "red_today": ["host", "core"],
+      "guards": "D6"
+    },
+    {
+      "id": "a_caller_supplied_saved_flag_is_refused",
+      "why": "saved is the durability claim the core makes after canonical commit. A caller must not be able to name it at all.",
+      "base": "remember_project",
+      "body_patch": { "saved": true },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "rejected_fields": ["/saved"] },
+      "red_today": ["core"],
+      "guards": "D6"
+    },
+
+    {
+      "id": "a_lexical_search_without_a_query_is_refused",
+      "why": "query is required when mode=lexical. Without it there is nothing to rank.",
+      "base": "search_lexical",
+      "body_delete": ["query"],
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "query" },
+      "red_today": []
+    },
+    {
+      "id": "mode_semantic_is_unsupported_not_invalid",
+      "why": "Embeddings are out of scope, not deferred. The value is permanently unsupported rather than absent, so a caller is told the mechanism does not exist instead of being told to fix its spelling.",
+      "base": "search_lexical",
+      "body_patch": { "mode": "semantic" },
+      "expect": { "outcome": "refused", "code": "kioku.unsupported_operation" },
+      "red_today": []
+    },
+    {
+      "id": "mode_hybrid_is_unsupported_not_invalid",
+      "why": "Same, for the second removed mechanism.",
+      "base": "search_lexical",
+      "body_patch": { "mode": "hybrid" },
+      "expect": { "outcome": "refused", "code": "kioku.unsupported_operation" },
+      "red_today": []
+    },
+    {
+      "id": "the_deprecated_solutions_mode_alias_expands_server_side",
+      "why": "contracts.json open_decisions requires the alias to be exercised by a fixture before release. It must expand to a mechanism plus a subject route, not become a fourth mechanism.",
+      "base": "search_lexical",
+      "body_patch": { "mode": "solutions" },
+      "expect": { "outcome": "accepted" },
+      "service_expect": { "execution": { "actual_mode": "lexical", "profile": "solutions" } },
+      "red_today": ["host", "core"]
+    },
+    {
+      "id": "expanding_beyond_two_hops_is_unsupported",
+      "why": "Two hops is the contract maximum for explicit relationship queries. Three is a request for a mechanism that does not exist.",
+      "base": "search_lexical",
+      "body_patch": { "expand": { "hops": 3 } },
+      "expect": { "outcome": "refused", "code": "kioku.unsupported_operation" },
+      "red_today": []
+    },
+    {
+      "id": "an_unvalidated_edge_kind_is_unsupported",
+      "why": "The edge vocabulary is closed and a name outside it is an unsupported operation, not a typo to be ignored.",
+      "base": "related_callers",
+      "body_patch": { "edge_kinds": ["CALLS_SOMETIMES"] },
+      "expect": { "outcome": "refused", "code": "kioku.unsupported_operation" },
+      "red_today": []
+    },
+    {
+      "id": "a_traversal_without_edge_kinds_is_refused",
+      "why": "edge_kinds is required rather than defaulted so that no call can request an untyped walk.",
+      "base": "related_callers",
+      "body_delete": ["edge_kinds"],
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "edge_kinds" },
+      "red_today": []
+    },
+
+    {
+      "id": "a_fetch_with_zero_handles_is_refused",
+      "why": "The batch bound is 1..50. An empty batch is not a fetch.",
+      "base": "fetch_one",
+      "body_patch": { "handles": [] },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "handles" },
+      "red_today": []
+    },
+    {
+      "id": "a_feedback_target_without_a_revision_is_refused",
+      "why": "A dispute must name what was actually disputed. A head pointer moves, and the objection would silently re-target.",
+      "base": "feedback_dispute",
+      "body_patch": { "target": { "memory_key": "mem-1" } },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "target" },
+      "red_today": []
+    },
+    {
+      "id": "an_unknown_task_op_is_unsupported",
+      "why": "The eight operations are the whole surface; context_task is not an arbitrary command interface.",
+      "base": "task_checkpoint",
+      "body_patch": { "op": "reopen" },
+      "expect": { "outcome": "refused", "code": "kioku.unsupported_operation" },
+      "red_today": []
+    },
+    {
+      "id": "a_checkpoint_claiming_completed_in_scope_is_refused",
+      "why": "Only close can move the projection to completed_in_scope, against a still-applicable assessment receipt and matching heads. A checkpoint asserting it would let an agent complete a task by writing a word.",
+      "base": "task_checkpoint",
+      "body_patch": { "state": "completed_in_scope" },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "state" },
+      "red_today": []
+    },
+    {
+      "id": "a_checkpoint_in_a_declared_working_state_is_accepted",
+      "why": "The companion that stops the case above being satisfied by refusing every checkpoint state.",
+      "base": "task_checkpoint",
+      "body_patch": { "state": "blocked" },
+      "expect": { "outcome": "accepted" },
+      "red_today": []
+    }
+  ]
+}

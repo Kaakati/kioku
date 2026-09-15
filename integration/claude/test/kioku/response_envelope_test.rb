@@ -28,11 +28,27 @@ class KiokuResponseEnvelopeTest < Minitest::Test
     end
   end
 
-  # "The nine-way discrimination set of Plan §6.1. This is the single discriminator"
-  # [contracts: response_fields.status]. There is no tenth status in v1
-  # [contracts: open_decisions "the tenth transport-level status"].
-  def test_should_reject_the_response_when_the_status_is_outside_the_nine_way_set
-    assert_equal "kioku.invalid_request", refuse(success_response("status" => "invalid")).code
+  # "This is the single discriminator" [contracts: response_fields.status]. D1
+  # settled the enum at eleven values — the nine of plan §6.1 plus `invalid` for a
+  # caller fault and `internal_error` for a core fault — so the value used here is
+  # one that is outside the set in either reading. Naming `invalid` would have
+  # measured nothing once D1 landed.
+  def test_should_reject_the_response_when_the_status_is_outside_the_declared_set
+    assert_equal "kioku.invalid_request", refuse(success_response("status" => "written")).code
+  end
+
+  # D1's other half at the parser. `invalid` and `internal_error` are declared
+  # response statuses, and a core that reports one must not have its own output
+  # refused by the host that asked for it.
+  def test_should_accept_the_response_when_the_status_is_a_caller_fault_or_a_core_fault
+    {
+      "invalid" => "kioku.invalid_request",
+      "internal_error" => "kioku.internal_error"
+    }.each do |status, code|
+      payload = success_response("status" => status, "data" => nil, "error" => error_body(code))
+
+      assert_equal status, parse(payload).status
+    end
   end
 
   # "present for every status except success ... Present on partial and queued too, so a

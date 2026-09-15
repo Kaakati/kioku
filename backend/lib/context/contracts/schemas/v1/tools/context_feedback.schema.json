@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tools/context_feedback.schema.json",
+  "title": "context_feedback",
+  "description": "Attach an attributed dispute or usefulness/irrelevance signal to one exact memory revision, project or global, preserving the objection and its disposition without mutating or cancelling the target.",
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["envelope", "target", "action", "reason"],
+
+  "properties": {
+    "envelope": { "$ref": "envelope.request.schema.json#/$defs/mutation" },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memory_key", "revision"],
+      "properties": {
+        "memory_key": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "revision": { "type": "integer", "minimum": 1 }
+      },
+      "description": "An exact revision, not a head pointer. A head-only reference returns kioku.invalid_request, because a dispute must name what was actually disputed."
+    },
+    "action": { "$ref": "common.schema.json#/$defs/feedback_action" },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": { "$ref": "common.schema.json#/$defs/evidence_link" },
+      "description": "Evidence for the objection. Optional here: an objection may be a judgment, and the contract requires an eligible link only on context_remember."
+    },
+    "disposition": {
+      "$ref": "common.schema.json#/$defs/feedback_disposition",
+      "default": "open",
+      "description": "Only the authorized party may set resolved or withdrawn; resolving another principal's dispute returns kioku.authority_violation. Resolving a dispute does not by itself verify its source."
+    },
+    "feedback_key": {
+      "$ref": "common.schema.json#/$defs/non_empty_string",
+      "description": "Update an existing feedback record's disposition. Pairs with envelope.expected_revision and carries its own idempotency receipt."
+    },
+    "scope_note": { "type": "string", "maxLength": 4096 },
+    "proposed_override": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_key", "reason"],
+      "oneOf": [
+        { "required": ["replacement_body"] },
+        { "required": ["exclusion"] }
+      ],
+      "properties": {
+        "project_key": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+        "replacement_body": { "type": "string", "minLength": 1, "maxLength": 16384 },
+        "exclusion": { "type": "boolean", "const": true },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "validity_interval": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "valid_from": { "$ref": "common.schema.json#/$defs/rfc3339" },
+            "valid_until": { "$ref": "common.schema.json#/$defs/rfc3339" }
+          }
+        }
+      },
+      "description": "A routing hint only. context_feedback never writes a project override: the response returns a prepared override request that the caller submits through context_remember's override variant. Override authority stays on the write path."
+    },
+    "task_key": { "$ref": "common.schema.json#/$defs/non_empty_string" },
+    "context_epoch": { "type": "string" }
+  },
+
+  "allOf": [
+    { "if": { "required": ["feedback_key"] },
+      "then": { "properties": { "envelope": { "required": ["expected_revision"] } } } }
+  ],
+
+  "x-kioku-refusals": {
+    "target_is_a_head_pointer_rather_than_an_exact_revision": "kioku.invalid_request",
+    "target_does_not_resolve": "kioku.handle_unresolved",
+    "resolving_another_principals_dispute": "kioku.authority_violation",
+    "feedback_key_expected_revision_stale": "kioku.revision_conflict"
+  }
+}

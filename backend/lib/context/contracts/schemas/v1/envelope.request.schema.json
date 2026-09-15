@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "envelope.request.schema.json",
+  "title": "kioku.tool.v1 common request envelope",
+  "description": "The envelope every tool call carries. Two variants: a read envelope and a mutation envelope, which differ only in what is required. Both are closed, so an identity or authority field has nowhere to land at any depth.",
+
+  "$defs": {
+    "read": {
+      "$ref": "common.schema.json#/$defs/envelope",
+      "title": "read envelope",
+      "not": {
+        "anyOf": [
+          { "required": ["idempotency_key"] },
+          { "required": ["request_digest"] },
+          { "required": ["expected_revision"] }
+        ]
+      },
+      "description": "Reads carry no idempotency fields. Supplying one is refused with kioku.invalid_request: an idempotency receipt is a durability claim, a read produces none, and accepting the field would invite a caller to believe a read had been deduplicated."
+    },
+    "mutation": {
+      "$ref": "common.schema.json#/$defs/envelope",
+      "title": "mutation envelope",
+      "required": ["schema_version", "request_id", "deadline_ms", "scope", "idempotency_key", "request_digest"],
+      "description": "Mutations additionally carry an actor-scoped idempotency key and a request digest, plus expected_revision when appending to an existing record. Same key with the same recomputed digest returns the prior receipt verbatim; same key with a different digest returns kioku.idempotency_conflict."
+    }
+  },
+
+  "x-kioku-validation-order": [
+    "schema_version",
+    "request_id",
+    "deadline_ms",
+    "scope",
+    "idempotency_key",
+    "request_digest",
+    "expected_revision"
+  ],
+  "x-kioku-validation-order-note": "Fields are validated in this order so an unsupported schema version is reported before any scope resolution, which is what lets kioku.unsupported_schema_version answer with a null generation vector honestly.",
+
+  "x-kioku-refusals": {
+    "schema_version_major_mismatch": "kioku.unsupported_schema_version",
+    "schema_version_absent_or_malformed": "kioku.invalid_request",
+    "request_id_not_uuidv7": "kioku.invalid_request",
+    "deadline_ms_out_of_range": "kioku.invalid_request",
+    "scope_store_absent_or_unknown": "kioku.invalid_request",
+    "project_key_absent_when_store_requires_it": "kioku.project_binding_unresolved",
+    "idempotency_key_absent_on_mutation": "kioku.invalid_request",
+    "request_digest_absent_or_malformed_on_mutation": "kioku.invalid_request",
+    "request_digest_does_not_match_recomputed_body": "kioku.invalid_request",
+    "undeclared_key_at_any_depth": "kioku.invalid_request"
+  }
+}

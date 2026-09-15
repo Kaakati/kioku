@@ -1,0 +1,264 @@
+{
+  "$id": "conformance/envelope_request_cases.json",
+  "title": "Common envelope conformance cases",
+  "description": "Driven through EACH side's real envelope parser: Kioku::Envelope::RequestParser on the host, Context::Contracts::EnvelopeDecoder in the core. Both must reach the same outcome and the same wire code for every case. A case is worthless unless reverting the fix it guards turns it red, so `red_today` names the side that fails it at commit d86b4a7; a case marked green on both sides exists only to stop its partner case being satisfied by refusing everything.",
+
+  "base_envelopes": {
+    "read": {
+      "schema_version": "kioku.tool.v1",
+      "request_id": "018f3a2b-7c1d-7e4a-9b2c-3d4e5f6a7b8c",
+      "deadline_ms": 3000,
+      "scope": { "store": "project", "project_key": "kioku" }
+    },
+    "mutation": {
+      "schema_version": "kioku.tool.v1",
+      "request_id": "018f3a2b-7c1d-7e4a-9b2c-3d4e5f6a7b8c",
+      "deadline_ms": 5000,
+      "scope": { "store": "project", "project_key": "kioku" },
+      "idempotency_key": "remember-2026-09-15-0001",
+      "request_digest": "sha256:3b0c4f1e9a7d2c5b8e6f0a1d4c7b2e5f8a9d0c3b6e1f4a7d2c5b8e0f3a6d9c1b"
+    }
+  },
+
+  "patch_semantics": "envelope_patch is merged over the named base envelope one level deep; a nested object replaces the base's value for that key outright, and an explicit null sets that key to JSON null. envelope_delete removes the named keys entirely, which is how an ABSENT field is distinguished from a null one.",
+
+  "cases": [
+    {
+      "id": "read_envelope_minimal_is_accepted",
+      "why": "The baseline the refusal cases are measured against.",
+      "operation": "read",
+      "envelope": "read",
+      "expect": { "outcome": "accepted" },
+      "red_today": []
+    },
+    {
+      "id": "mutation_envelope_minimal_is_accepted",
+      "why": "The mutation baseline.",
+      "operation": "mutation",
+      "envelope": "mutation",
+      "expect": { "outcome": "accepted" },
+      "red_today": []
+    },
+
+    {
+      "id": "minor_above_the_implemented_one_is_accepted",
+      "why": "contract.json minor_policy: the MAJOR is matched and minor additions are additive-only. Refusing an unknown minor would break every additive release.",
+      "operation": "read",
+      "envelope": "read",
+      "envelope_patch": { "schema_version": "kioku.tool.v1.7" },
+      "expect": { "outcome": "accepted" },
+      "red_today": ["core"],
+      "guards": "D2"
+    },
+    {
+      "id": "unsupported_major_is_refused_before_scope_resolution",
+      "why": "A major mismatch is kioku.unsupported_schema_version, and it is reported before any scope work, which is what lets the response carry a null generation vector honestly.",
+      "operation": "read",
+      "envelope": "read",
+      "envelope_patch": { "schema_version": "kioku.tool.v2" },
+      "expect": { "outcome": "refused", "code": "kioku.unsupported_schema_version" },
+      "red_today": [],
+      "guards": "D2"
+    },
+    {
+      "id": "absent_schema_version_is_a_malformed_request_not_an_unsupported_version",
+      "why": "Nothing was declared, so nothing is unsupported. Answering unsupported_schema_version here would tell a caller to change a version they never sent.",
+      "operation": "read",
+      "envelope": "read",
+      "envelope_delete": ["schema_version"],
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request" },
+      "red_today": []
+    },
+
+    {
+      "id": "uuid_v4_request_id_is_refused",
+      "why": "contracts.json request_fields.request_id: UUIDv7, 36 chars. Ruby 3.4 has SecureRandom.uuid_v7, so the requirement costs a caller nothing; a v4 id means the caller is generating ids some other way.",
+      "operation": "read",
+      "envelope": "read",
+      "envelope_patch": { "request_id": "9f8b2d41-3c6e-4a17-8d52-0b7e1c9a4f36" },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "request_id" },
+      "red_today": ["core"],
+      "guards": "D3"
+    },
+    {
+      "id": "uppercase_uuid_v7_request_id_is_refused",
+      "why": "Lowercase only, so one id cannot arrive in two spellings and match two receipts.",
+      "operation": "read",
+      "envelope": "read",
+      "envelope_patch": { "request_id": "018F3A2B-7C1D-7E4A-9B2C-3D4E5F6A7B8C" },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "request_id" },
+      "red_today": ["core"],
+      "guards": "D3"
+    },
+    {
+      "id": "thirty_seven_character_request_id_is_refused",
+      "why": "The length bound is part of the declared type, not decoration.",
+      "operation": "read",
+      "envelope": "read",
+      "envelope_patch": { "request_id": "018f3a2b-7c1d-7e4a-9b2c-3d4e5f6a7b8cd" },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "request_id" },
+      "red_today": ["core"],
+      "guards": "D3"
+    },
+
+    {
+      "id": "deadline_ms_zero_is_refused",
+      "why": "The declared range is 1..30000. A zero budget is not a request.",
+      "operation": "read",
+      "envelope": "read",
+      "envelope_patch": { "deadline_ms": 0 },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "deadline_ms" },
+      "red_today": []
+    },
+    {
+      "id": "deadline_ms_above_the_cap_is_refused",
+      "why": "An unbounded deadline defeats the bound every tool call is supposed to carry.",
+      "operation": "read",
+      "envelope": "read",
+      "envelope_patch": { "deadline_ms": 30001 },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "deadline_ms" },
+      "red_today": []
+    },
+    {
+      "id": "deadline_ms_as_a_numeric_string_is_refused",
+      "why": "Values are typed. Coercing \"3000\" would make the request digest of two different bodies agree.",
+      "operation": "read",
+      "envelope": "read",
+      "envelope_patch": { "deadline_ms": "3000" },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "deadline_ms" },
+      "red_today": []
+    },
+
+    {
+      "id": "unknown_scope_store_is_refused",
+      "why": "store is the enum that decides which namespace is read or written.",
+      "operation": "read",
+      "envelope": "read",
+      "envelope_patch": { "scope": { "store": "everything" } },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "scope.store" },
+      "red_today": []
+    },
+    {
+      "id": "project_store_without_project_key_is_binding_unresolved_not_invalid",
+      "why": "Invariant 11. A missing binding is setup state that the operator resolves, not a malformed request, and it must never fall back to global.",
+      "operation": "read",
+      "envelope": "read",
+      "envelope_patch": { "scope": { "store": "project" } },
+      "expect": { "outcome": "refused", "code": "kioku.project_binding_unresolved", "details": { "setup_required": true } },
+      "red_today": []
+    },
+    {
+      "id": "both_store_without_project_key_is_binding_unresolved",
+      "why": "'both' is the default retrieval posture and still names a project. Omitting project_key must not silently degrade it to a global-only read.",
+      "operation": "read",
+      "envelope": "read",
+      "envelope_patch": { "scope": { "store": "both" } },
+      "expect": { "outcome": "refused", "code": "kioku.project_binding_unresolved" },
+      "red_today": []
+    },
+    {
+      "id": "global_store_without_project_key_is_accepted",
+      "why": "A global operation declares store=global explicitly. This is the companion that stops the two cases above being satisfied by refusing every scope.",
+      "operation": "read",
+      "envelope": "read",
+      "envelope_patch": { "scope": { "store": "global" } },
+      "expect": { "outcome": "accepted" },
+      "red_today": []
+    },
+
+    {
+      "id": "authority_inside_the_envelope_is_refused",
+      "why": "authority is derived by the core from origin_role and transport and is never accepted from a caller. The envelope is closed, so the name has nowhere to land.",
+      "operation": "read",
+      "envelope": "read",
+      "envelope_patch": { "authority": "user" },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "rejected_fields": ["/envelope/authority"] },
+      "red_today": ["core"],
+      "guards": "D6"
+    },
+    {
+      "id": "origin_role_nested_in_correlation_is_refused",
+      "why": "This is the bypass a depth-limited name check misses: correlation is the one envelope object with loose-looking contents, so it is where an identity field would be smuggled. Closure at every depth is what refuses it.",
+      "operation": "read",
+      "envelope": "read",
+      "envelope_patch": { "correlation": { "session_id": "s-1", "origin_role": "user" } },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "rejected_fields": ["/envelope/correlation/origin_role"] },
+      "red_today": ["host", "core"],
+      "guards": "D6"
+    },
+    {
+      "id": "a_correlation_carrying_only_declared_hints_is_accepted",
+      "why": "The companion to the case above. Without it, refusing every correlation object would pass.",
+      "operation": "read",
+      "envelope": "read",
+      "envelope_patch": { "correlation": { "session_id": "s-1", "agent_key": "a-1", "tool_use_id": "t-1" } },
+      "expect": { "outcome": "accepted" },
+      "red_today": []
+    },
+    {
+      "id": "an_undeclared_envelope_key_is_refused",
+      "why": "The closure rule. The published surface is the whole accepted surface: an unrecognised field is refused by name rather than ignored, so a caller learns their field did nothing.",
+      "operation": "read",
+      "envelope": "read",
+      "envelope_patch": { "priority": "high" },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "rejected_fields": ["/envelope/priority"] },
+      "red_today": ["host", "core"],
+      "guards": "D6"
+    },
+
+    {
+      "id": "a_read_carrying_an_idempotency_key_is_refused",
+      "why": "An idempotency receipt is a durability claim and a read produces none. Accepting the field would let a caller believe a read had been deduplicated.",
+      "operation": "read",
+      "envelope": "read",
+      "envelope_patch": { "idempotency_key": "read-1" },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "rejected_fields": ["/envelope/idempotency_key"] },
+      "red_today": ["host", "core"]
+    },
+    {
+      "id": "a_mutation_without_an_idempotency_key_is_refused",
+      "why": "Without it a retry cannot be recognised as a retry, and a deadline expiry becomes an unrecoverable double write.",
+      "operation": "mutation",
+      "envelope": "mutation",
+      "envelope_delete": ["idempotency_key"],
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "idempotency_key" },
+      "red_today": []
+    },
+    {
+      "id": "an_idempotency_key_over_128_bytes_is_refused",
+      "why": "The declared bound. An unbounded key is an unbounded index entry.",
+      "operation": "mutation",
+      "envelope": "mutation",
+      "envelope_patch": { "idempotency_key": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk" },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "idempotency_key" },
+      "red_today": []
+    },
+    {
+      "id": "a_request_digest_that_is_not_sha256_hex_is_refused",
+      "why": "The digest's shape is checked before its value, so a malformed digest is a request fault rather than a mismatch.",
+      "operation": "mutation",
+      "envelope": "mutation",
+      "envelope_patch": { "request_digest": "sha1:deadbeef" },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "request_digest" },
+      "red_today": []
+    },
+    {
+      "id": "expected_revision_zero_is_refused",
+      "why": "Revisions start at 1. Zero is neither a create (null) nor a revision.",
+      "operation": "mutation",
+      "envelope": "mutation",
+      "envelope_patch": { "expected_revision": 0 },
+      "expect": { "outcome": "refused", "code": "kioku.invalid_request", "field": "expected_revision" },
+      "red_today": []
+    },
+    {
+      "id": "expected_revision_null_means_create_and_is_accepted",
+      "why": "Null or absent means create. The companion that stops the case above being satisfied by refusing every expected_revision.",
+      "operation": "mutation",
+      "envelope": "mutation",
+      "envelope_patch": { "expected_revision": null },
+      "expect": { "outcome": "accepted" },
+      "red_today": []
+    }
+  ]
+}

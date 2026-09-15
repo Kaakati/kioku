@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tools/context_related.schema.json",
+  "title": "context_related",
+  "description": "Answer a typed relationship question - callers, decision rationale, change impact, evidence lineage - by bounded traversal from authorized seeds, returning explicit depth, fanout and coverage limits instead of an exhaustive graph.",
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["envelope", "seeds", "edge_kinds", "direction"],
+
+  "properties": {
+    "envelope": { "$ref": "envelope.request.schema.json#/$defs/read" },
+    "seeds": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": { "$ref": "common.schema.json#/$defs/typed_handle" }
+    },
+    "edge_kinds": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": { "$ref": "common.schema.json#/$defs/edge_kind" },
+      "description": "Required rather than defaulted, so that no call can request an untyped walk. An unvalidated name returns kioku.unsupported_operation."
+    },
+    "direction": {
+      "$ref": "common.schema.json#/$defs/direction",
+      "description": "Forward and reverse indexes are maintained separately."
+    },
+    "max_hops": { "type": "integer", "minimum": 1, "maximum": 2, "default": 1 },
+    "fanout": { "type": "integer", "minimum": 1, "default": 25 },
+    "max_visited_edges": { "type": "integer", "minimum": 1, "default": 200 },
+    "filters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository_key": { "$ref": "common.schema.json#/$defs/string_list" },
+        "worktree_key": { "$ref": "common.schema.json#/$defs/string_list" },
+        "language": { "$ref": "common.schema.json#/$defs/string_list" },
+        "lifecycle": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/lifecycle" } },
+        "memory_kinds": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/memory_kind" } },
+        "authority": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/$defs/authority_label" },
+          "x-kioku-core-derived-exempt": "The same retrieval predicate over stored labels as on context_search. It narrows the traversal result set and asserts nothing about the caller."
+        },
+        "resolution_basis": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/resolution_basis" } },
+        "source_view": { "$ref": "common.schema.json#/$defs/source_view" },
+        "commit_oid": { "type": "string" }
+      }
+    },
+    "include_unresolved_targets": {
+      "type": "boolean",
+      "default": true,
+      "description": "Unresolved external targets stay explicitly qualified rather than being dropped."
+    },
+    "diversity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_per_node": { "type": "integer", "minimum": 1, "default": 5 },
+        "suppress_high_degree_above": { "type": "integer", "minimum": 1, "default": 200 }
+      },
+      "description": "So high-degree utility symbols do not dominate the result set."
+    },
+    "require_source_validation": { "type": "boolean", "default": false },
+    "token_budget": { "$ref": "common.schema.json#/$defs/token_budget" },
+    "limit": { "type": "integer", "minimum": 1, "default": 25 },
+    "cursor": { "type": "string", "maxLength": 2048 }
+  },
+
+  "x-kioku-refusals": {
+    "edge_kind_outside_vocabulary": "kioku.unsupported_operation",
+    "max_hops_above_2": "kioku.unsupported_operation",
+    "seed_does_not_resolve": "kioku.handle_unresolved"
+  },
+  "x-kioku-labelling": {
+    "facet_basis": "bounded_candidate_pool",
+    "note": "A traversal-expanded result set is a bounded candidate pool, not the declared match set, and is labelled as such. The label survives the removal of vector candidate pools."
+  }
+}

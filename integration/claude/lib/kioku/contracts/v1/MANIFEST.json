@@ -1,0 +1,23 @@
+{
+  "contract_id": "kioku.tool.v1",
+  "generated_by": "contracts/bin/kioku-contracts sync",
+  "files": {
+    "common.schema.json": "sha256:c158ecad9745c0f304e976461379b572deb9bf759be88bd6628d43e335824028",
+    "conformance/envelope_request_cases.json": "sha256:c53455690e87199331bfa36768bb1eb906babd91351dc4dded1ea4b9a436a22d",
+    "conformance/envelope_response_cases.json": "sha256:1e0b76a61a60509b33fe272986f0a8ef8f22c3eb0825cfb4915a5b0a574d40ef",
+    "conformance/resolved_tools.json": "sha256:9040c616406bcbc00e2c571e6bf2e38273e556ddccad028e1eec5c3da785e817",
+    "conformance/tool_input_cases.json": "sha256:448a918c614e8ae0c9d8612059bfd176e4b58a585ceeb4c2f960b1474581a42f",
+    "contract.json": "sha256:93505cffbe0b258cdf53378142ec17fae9c667a36ef49e03d4d649efdeca2b1b",
+    "envelope.request.schema.json": "sha256:9ee5f79daf8e719739417ed080190a32c5387b389ac8742df8a3506f425aae7a",
+    "envelope.response.schema.json": "sha256:3712583d7cc2d806c8480696f58ae52585f088ed1de4c09e7608831d8d21f47e",
+    "errors.json": "sha256:7e7a03cf289f02238b7f24974c62219ce0ba3eee85750a968d4731fcee830ca1",
+    "implemented.json": "sha256:3b0d3296d333831e3f4816f078169ad35d554896d5038b5cfa8508cb90ee0505",
+    "tools/context_feedback.schema.json": "sha256:84f34f4934270b664298772eabbdcc2a78aa24819e95bc19347e182d3508a5e1",
+    "tools/context_fetch.schema.json": "sha256:6ef7146904dd6edb5ecf37a1f69482806df7c339db24e330e51ea6df5473efec",
+    "tools/context_related.schema.json": "sha256:5fcf3535d55678d851c8b93236d2538764834a3dde86a5bb9d3acbb003bfd728",
+    "tools/context_remember.schema.json": "sha256:4b61d48609332d44ceff26af449e1887857f1191fdfdd15093634aee4622410f",
+    "tools/context_search.schema.json": "sha256:799de33d1fe65094393761dcce0693f004e13c34ca5be9e179826939213bd26f",
+    "tools/context_task.schema.json": "sha256:ad3c84fc0d59ece8db7f6635707ae92329cb4d2b5c0efbb58f0c6b8a274cb98d"
+  },
+  "artifact_digest": "sha256:81472aced09526af4c7c1079acd1c3e2663d63f197d86be81cce98fe11c2fae8"
+}

@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "envelope.response.schema.json",
+  "title": "kioku.tool.v1 common response envelope",
+  "description": "What the core returns and what the host is willing to render. status is present on EVERY response, including transport-level refusals; error is present on every status except success. A caller branches on one field, always.",
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "status",
+    "error",
+    "generation_vector",
+    "coverage",
+    "limits",
+    "warnings",
+    "server_time"
+  ],
+
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "kioku.tool.v1",
+      "description": "The version the core implements, not an echo of the caller's declared minor."
+    },
+    "request_id": {
+      "$ref": "common.schema.json#/$defs/request_id",
+      "description": "Echoed verbatim from the request, and carried on every receipt."
+    },
+    "status": {
+      "$ref": "common.schema.json#/$defs/response_status",
+      "description": "The single discriminator. error.code refines it. Never omitted: an omitted status forces a caller to branch on two fields and made a core fault indistinguishable from a malformed request."
+    },
+    "error": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable", "retry_after_ms", "details"],
+      "properties": {
+        "code": { "$ref": "errors.json#/x-kioku-wire-names" },
+        "message": {
+          "type": "string",
+          "description": "Operator-facing, content- and credential-redacted. It never echoes a remembered body or a rejected value."
+        },
+        "retryable": { "type": "boolean" },
+        "retry_after_ms": { "type": ["integer", "null"], "minimum": 0 },
+        "details": { "type": "object" }
+      },
+      "description": "null only when status is success. Present on partial and queued too: neither is a failure, and a caller still branches on one field."
+    },
+    "data": {
+      "type": ["object", "null"],
+      "description": "Tool-specific payload. Absent (null) on unauthorized_scope, deadline_expired, invalid and internal_error; may be present and truncated on partial."
+    },
+    "generation_vector": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "canonical_generation", "policy_generation", "global_generation",
+        "index_generation", "source_epoch", "deletion_epoch",
+        "host_link_state", "observed_at"
+      ],
+      "properties": {
+        "canonical_generation": { "type": "integer", "minimum": 0 },
+        "policy_generation": { "type": "integer", "minimum": 0 },
+        "global_generation": { "type": "integer", "minimum": 0 },
+        "index_generation": { "type": "integer", "minimum": 0 },
+        "source_epoch": { "type": "integer", "minimum": 0 },
+        "deletion_epoch": { "type": "integer", "minimum": 0 },
+        "host_link_state": { "type": "string", "enum": ["connected", "disconnected", "degraded"] },
+        "observed_at": { "$ref": "common.schema.json#/$defs/rfc3339" }
+      },
+      "description": "The key is always present. It is null only when the request was refused before scope resolution — kioku.unsupported_schema_version, and a malformed envelope that never decoded. source_epoch is an observation, not a lock: one PostgreSQL database does not make a host file read atomic with database state."
+    },
+    "coverage": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["state", "declared_input_set", "counts", "gaps", "completeness_label"],
+      "properties": {
+        "state": { "type": "string", "enum": ["complete_for_declared_set", "partial", "unknown"] },
+        "declared_input_set": { "type": "object" },
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["considered", "returned", "truncated_at"],
+          "properties": {
+            "considered": { "type": "integer", "minimum": 0 },
+            "returned": { "type": "integer", "minimum": 0 },
+            "truncated_at": { "type": ["integer", "null"], "minimum": 0 }
+          }
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "detail", "count"],
+            "properties": {
+              "kind": { "$ref": "common.schema.json#/$defs/coverage_gap_kind" },
+              "detail": { "type": "string" },
+              "count": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "omitted_results": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["count", "reason"],
+          "properties": {
+            "count": { "type": "integer", "minimum": 0 },
+            "reason": { "type": "string" }
+          }
+        },
+        "completeness_label": {
+          "type": "string",
+          "const": "known_within_indexed_coverage",
+          "description": "Fixed. The contract has no value meaning complete for the repository."
+        }
+      }
+    },
+    "continuation": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["cursor", "expires_at", "bound", "reauthorized_on_use"],
+      "properties": {
+        "cursor": { "type": "string", "maxLength": 2048 },
+        "expires_at": { "$ref": "common.schema.json#/$defs/rfc3339" },
+        "bound": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scope_digest", "query_digest", "filter_digest", "mode", "ranking_config_version", "generation_vector_digest"],
+          "properties": {
+            "scope_digest": { "type": "string" },
+            "query_digest": { "type": "string" },
+            "filter_digest": { "type": "string" },
+            "mode": { "type": "string" },
+            "ranking_config_version": { "type": "string" },
+            "generation_vector_digest": { "type": "string" }
+          }
+        },
+        "reauthorized_on_use": { "type": "boolean", "const": true },
+        "reset_required_reason": {
+          "type": ["string", "null"],
+          "enum": ["index_changed", "scope_changed", "expired", "deleted", null]
+        }
+      },
+      "description": "Reads only. Always null on a mutation, never omitted."
+    },
+    "receipt": { "type": ["object", "null"] },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deadline_at", "elapsed_ms", "candidate_limit", "returned", "truncated"],
+      "properties": {
+        "deadline_at": { "type": ["string", "null"] },
+        "elapsed_ms": { "type": "integer", "minimum": 0 },
+        "candidate_limit": { "type": ["integer", "null"], "minimum": 0 },
+        "returned": { "type": ["integer", "null"], "minimum": 0 },
+        "truncated": { "type": "boolean" },
+        "token_accounting": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["estimated_tokens", "estimator_version", "budget", "rendered_hash"],
+          "properties": {
+            "estimated_tokens": { "type": "integer", "minimum": 0 },
+            "estimator_version": { "type": "string" },
+            "budget": { "type": ["integer", "null"], "minimum": 0 },
+            "rendered_hash": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "detail", "count"],
+        "properties": {
+          "code": { "type": "string", "minLength": 1 },
+          "detail": { "type": "string" },
+          "count": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "description": "Non-fatal conditions that did not change status. Default []."
+    },
+    "server_time": { "$ref": "common.schema.json#/$defs/rfc3339" }
+  },
+
+  "x-kioku-durability-rules": {
+    "saved_true_requires_success": "data.saved may be true only when status is success. A queued, partial, conflicted, deadline-expired or failed response that reports saved:true is refused by the host before the model ever sees it.",
+    "queued_requires_spool_receipt": "status=queued requires data.saved === false and a data.spool object carrying spool_entry_id, producer_key, producer_epoch and producer_sequence. Durable host enqueue is the only thing queued may mean.",
+    "data_absent_statuses": ["unauthorized_scope", "deadline_expired", "invalid", "internal_error"]
+  }
+}

@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "errors.json",
+  "title": "kioku.tool.v1 error registry",
+  "description": "The whole frozen wire vocabulary, with the response status each name resolves to, whether a caller may retry, and the HTTP status the Rails surface answers with. Both deploy units read this table; neither keeps its own copy. A name outside it cannot reach a caller, so an invented condition cannot arrive under a plausible-looking name.",
+
+  "x-kioku-wire-names": {
+    "type": "string",
+    "enum": [
+      "ok",
+      "kioku.partial_result",
+      "kioku.queued",
+      "kioku.revision_conflict",
+      "kioku.idempotency_conflict",
+      "kioku.authority_violation",
+      "kioku.evidence_required",
+      "kioku.continuation_expired",
+      "kioku.precondition_failed",
+      "kioku.scope_denied",
+      "kioku.project_binding_unresolved",
+      "kioku.handle_unresolved",
+      "kioku.source_unavailable",
+      "kioku.evidence_unavailable",
+      "kioku.quota_exhausted",
+      "kioku.deadline_exceeded",
+      "kioku.invalid_request",
+      "kioku.unsupported_schema_version",
+      "kioku.unsupported_operation",
+      "kioku.internal_error"
+    ]
+  },
+
+  "x-kioku-http-note": "http_status is an interpretation, not contract text: contracts.json names no HTTP mapping. It binds the Rails surface only. The host branches on code and status and ignores it, so a change here can never change what the model is told.",
+
+  "errors": {
+    "ok": {
+      "status": "success",
+      "retryable": false,
+      "http_status": 200,
+      "error_body": false,
+      "condition": "the request was fully satisfied within scope, budget and deadline",
+      "note": "error is null. Coverage may still be partial in the evidence sense without changing status; coverage.state carries that, not status."
+    },
+    "kioku.partial_result": {
+      "status": "partial",
+      "retryable": false,
+      "http_status": 200,
+      "error_body": true,
+      "condition": "an authorized, in-budget answer was produced but some declared portion could not be served",
+      "note": "data present, coverage.state=partial, gaps enumerated. Retrying produces the same partial result; the caller continues with a cursor instead. Applicability filtering that removes results triggers a bounded refill first; material contrary evidence is never the thing dropped to fit."
+    },
+    "kioku.queued": {
+      "status": "queued",
+      "retryable": true,
+      "http_status": 202,
+      "error_body": true,
+      "condition": "the write was durably enqueued on the host spool but has not reached canonical commit",
+      "note": "Carries {spool_entry_id, producer_key, producer_epoch, producer_sequence, saved:false}. retryable is true because retrying is the contract's own mechanism: 'Replay after reconnect returns the same idempotency receipt.' Re-issuing with the same idempotency key and request digest is how the caller learns the commit outcome, exactly as for kioku.deadline_exceeded. Resolves D5."
+    },
+    "kioku.revision_conflict": {
+      "status": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "error_body": true,
+      "condition": "expected_revision is stale or the target head moved",
+      "note": "details carries {current_revision, current_head, target_key}. The stale writer fails; nothing is written."
+    },
+    "kioku.idempotency_conflict": {
+      "status": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "error_body": true,
+      "condition": "the supplied idempotency key was reused, within the same actor scope, with a different request digest",
+      "note": "Nothing is written. details carries the prior receipt id and the differing digest. The lookup is (actor_principal_id, idempotency_key): a second actor reusing a key never sees the first actor's receipt id or digest, because it never matches their receipt."
+    },
+    "kioku.authority_violation": {
+      "status": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "error_body": true,
+      "condition": "an authority-changing edit was attempted without the backing authority",
+      "note": "The objection or proposal is preserved as an auditable record where the document requires it; the authority transition is refused. An assistant's objection cannot cancel a governing user constraint."
+    },
+    "kioku.evidence_required": {
+      "status": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "error_body": true,
+      "condition": "an explicit memory write supplied no ELIGIBLE evidence link",
+      "note": "Raised when the eligible set is empty after per-entry evaluation, not when a single ref is unresolvable. A well-formed but unresolvable ref is reported in data.evidence_rejected with a named reason. Resolves half of D4."
+    },
+    "kioku.continuation_expired": {
+      "status": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "error_body": true,
+      "condition": "a continuation cursor expired, or its bound scope/query/generation digest no longer matches",
+      "note": "details carries reset_required_reason. The caller restarts the query; no permanent score ordering is promised."
+    },
+    "kioku.precondition_failed": {
+      "status": "conflict",
+      "retryable": false,
+      "http_status": 412,
+      "error_body": true,
+      "condition": "context_task close was attempted against a receipt that is no longer applicable, or heads moved since the caller observed them",
+      "note": "details enumerates the concrete mismatch: {stale_heads, receipt_state, invalidating_changes}. Returns the mismatch, never a partial close."
+    },
+    "kioku.scope_denied": {
+      "status": "unauthorized_scope",
+      "retryable": false,
+      "http_status": 403,
+      "error_body": true,
+      "condition": "the requested project/global/cross-project scope is not granted to the authenticated principal",
+      "note": "data absent. Denial is uniform across fetch, caches, graph traversal, facets and aggregates and must not disclose whether the target exists in another scope.",
+      "http_status_override": {
+        "unrecognised_bridge_credential": 401,
+        "reason": "The contract freezes no separate authentication code, so an unrecognised credential is denied with this code but answered 401: the credential, not the requested scope, is what failed. The denial still discloses nothing about what exists."
+      }
+    },
+    "kioku.project_binding_unresolved": {
+      "status": "unauthorized_scope",
+      "retryable": false,
+      "http_status": 403,
+      "error_body": true,
+      "condition": "the project binding is missing or ambiguous for a project-scoped request",
+      "note": "details.setup_required=true. The core surfaces setup state; it never attaches another project's history and never reinterprets unresolved project capture as global."
+    },
+    "kioku.handle_unresolved": {
+      "status": "unauthorized_scope",
+      "retryable": false,
+      "http_status": 404,
+      "error_body": true,
+      "condition": "a handle did not resolve, whether because it does not exist or because it belongs to a scope the caller cannot see",
+      "note": "Deliberately merged so not-found and wrong-scope are indistinguishable; the internal audit log distinguishes them. The status is unauthorized_scope because the caller's branch is the same in both cases ('this is not obtainable') and because giving it a status of its own would reintroduce nothing useful. Both merged branches answer 404, so the HTTP status distinguishes nothing either. Resolves part of D1."
+    },
+    "kioku.source_unavailable": {
+      "status": "unavailable_source",
+      "retryable": true,
+      "http_status": 503,
+      "error_body": true,
+      "condition": "the host control connection is down, or the caller set require_source_validation and a selected dependency could not be checked before the deadline",
+      "note": "This is NOT the default behavior. By default the request succeeds with applicability historical or unknown and a host_disconnected coverage gap. Returned only when the caller demanded validation. Late validation responses cannot satisfy a newer request or source epoch."
+    },
+    "kioku.evidence_unavailable": {
+      "status": "evidence_unavailable",
+      "retryable": false,
+      "http_status": 410,
+      "error_body": true,
+      "condition": "the referenced revision, object or evidence handle was privacy-deleted, tombstoned, purged, redacted, or its retention expired",
+      "note": "details.reason in (deleted|expired|purged|redacted). Deletion epochs prevent queued jobs and replays from resurrecting it. In batch reads this appears per item in data.unavailable[] and the request status becomes partial."
+    },
+    "kioku.quota_exhausted": {
+      "status": "quota_exhausted",
+      "retryable": true,
+      "http_status": 429,
+      "error_body": true,
+      "condition": "installation or actor budget exceeded",
+      "note": "details {quota_kind, limit, observed, retry_after_ms}. Disk or spool exhaustion produces visible failure and loss accounting; it never produces a false durable acknowledgment."
+    },
+    "kioku.deadline_exceeded": {
+      "status": "deadline_expired",
+      "retryable": true,
+      "http_status": 504,
+      "error_body": true,
+      "condition": "the bounded deadline_ms elapsed before a result could be produced",
+      "note": "For reads, nothing is returned rather than an unlabeled fragment. For writes the outcome is indeterminate by design: the caller retries with the same idempotency key and request digest, which returns the prior receipt if the commit landed. A deadline expiry is never reported as a save."
+    },
+    "kioku.invalid_request": {
+      "status": "invalid",
+      "retryable": false,
+      "http_status": 400,
+      "error_body": true,
+      "condition": "the request failed schema, enum, bound, cardinality, digest or closure validation, or supplied a core-derived field",
+      "note": "status 'invalid' is the tenth value contracts.json proposed for v1.1, taken in v1 instead. The previous reading omitted status entirely, which made a client branch on two fields and made this code indistinguishable at the status level from a core fault. Resolves D1."
+    },
+    "kioku.unsupported_schema_version": {
+      "status": "invalid",
+      "retryable": false,
+      "http_status": 400,
+      "error_body": true,
+      "condition": "the request declared an unsupported schema_version MAJOR",
+      "note": "Returned before any scope resolution, so generation_vector is null on this response and only on this one and a malformed envelope. A minor this build does not implement is NOT this error: the version is accepted and any unknown field is refused by the closure rule instead. Resolves D2."
+    },
+    "kioku.unsupported_operation": {
+      "status": "invalid",
+      "retryable": false,
+      "http_status": 400,
+      "error_body": true,
+      "condition": "an operation, enum value or contract-named input is not supported by this contract version or by this build",
+      "note": "Covers an unknown context_task op, an unvalidated edge kind, mode=semantic or mode=hybrid (permanently unsupported, embeddings are out of scope), hops greater than 2, and a contract-named property this build has not implemented, which carries details.reason='not_implemented_in_this_build'."
+    },
+    "kioku.internal_error": {
+      "status": "internal_error",
+      "retryable": false,
+      "http_status": 500,
+      "error_body": true,
+      "condition": "an unexpected internal failure",
+      "note": "No partial write is implied. Services do not swallow unexpected exceptions or turn failed saves into successful results. message is content- and credential-redacted; the raised text stays on the server log and never reaches the wire. 'internal_error' is a status value of its own because mapping a core fault onto any caller-fault value reports a 500 as a client error, which is the observed defect. Resolves D1."
+    }
+  }
+}

@@ -11,24 +11,36 @@ require "test_helper"
 class SerializationLabelsTest < ActiveSupport::TestCase
   COLLAPSED_FIELD_NAMES = %w[confidence verified score trust truthiness].freeze
 
+  EVIDENCE_DIMENSIONS = %w[
+    authority lifecycle availability applicability claim_support coverage
+  ].freeze
+
+  # The six dimensions are six keys. Folding any one of them away — or dropping it
+  # from the whitelist — is what "collapsed into one verified boolean" looks like
+  # in practice, so the assertion is that each dimension survives under its own
+  # name carrying its own declared shape.
   test "should render applicability claim support and coverage as three separate item fields" do
     payload = Context::Serialization::Item.call(item: search_item)
 
     assert_equal "historical", payload["applicability"]
     assert_equal "unassessed", payload.dig("claim_support", "value")
     assert_equal "partial", payload.dig("coverage", "state")
-    refute_equal payload["applicability"], payload["claim_support"]
-    refute_equal payload["applicability"], payload["coverage"]
+    missing = EVIDENCE_DIMENSIONS.reject { |dimension| payload.key?(dimension) }
+    assert_empty missing, "the rendered item dropped an evidence dimension"
   end
 
-  test "should refuse to reduce claim support to a boolean or a float when rendering an item" do
-    payload = Context::Serialization::Item.call(item: search_item)
+  # The previous version of this case asserted that names absent from the INPUT
+  # were absent from the output, which every implementation satisfies — replacing
+  # Item.call with `source.transform_keys(&:to_s)` left it green. The input here
+  # carries the collapsed fields, so the whitelist is what removes them: swap it
+  # for a pass-through and this goes red.
+  test "should drop a supplied confidence and verified flag while keeping the structured claim support" do
+    payload = Context::Serialization::Item.call(item: collapsed_item)
 
-    assert_kind_of Hash, payload["claim_support"]
-    assert_kind_of Hash, payload["coverage"]
-    COLLAPSED_FIELD_NAMES.each do |name|
-      refute payload.key?(name), "item payload collapsed the evidence dimensions into #{name.inspect}"
-    end
+    assert_equal "supported_in_scope", payload.dig("claim_support", "value")
+    assert_equal "check:kioku-backend-suite", payload.dig("claim_support", "evaluator")
+    smuggled = COLLAPSED_FIELD_NAMES.select { |name| payload.key?(name) }
+    assert_empty smuggled, "a caller collapsed the evidence dimensions into these fields"
   end
 
   test "should keep the BM25 relevance score out of claim support when the item was never assessed" do
@@ -69,6 +81,25 @@ class SerializationLabelsTest < ActiveSupport::TestCase
   end
 
   private
+
+  # An item a caller (or a careless upstream mapper) tried to summarise: a
+  # confidence float, a verified boolean and three other single-number verdicts,
+  # alongside the structured claim support the contract actually declares.
+  def collapsed_item
+    search_item.merge(
+      confidence: 0.92,
+      verified: true,
+      score: 7.5,
+      trust: "high",
+      truthiness: 1,
+      claim_support: {
+        value: :supported_in_scope,
+        evaluator: "check:kioku-backend-suite",
+        attributed_at: "2026-09-15T00:00:00Z",
+        rationale_ref: "memory:alpha:memory-1#rationale"
+      }
+    )
+  end
 
   def search_item
     {
