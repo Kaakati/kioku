@@ -1,0 +1,77 @@
+<%
+  require "uri"
+
+  # DATABASE_URL is the single source of host, port, credentials and database
+  # name for every service (compose contract). The test environment must never
+  # share a database with development, so it appends a suffix to the URL's path
+  # rather than being handed a second URL.
+  kioku_database_url = lambda do |suffix|
+    raw = ENV["DATABASE_URL"]
+    next nil if raw.nil? || raw.strip.empty?
+    next raw if suffix.nil?
+
+    uri = URI.parse(raw)
+    uri.path = "#{uri.path}#{suffix}"
+    uri.to_s
+  end
+%>
+
+# Connection-pool arithmetic (plan 4.2: bound API threads, worker processes and
+# background concurrency together against PostgreSQL's connection budget, and
+# reserve capacity for foreground retrieval and source validation).
+#
+#   PostgreSQL 18 image defaults: max_connections = 100,
+#   superuser_reserved_connections = 3  ->  97 usable by the application.
+#
+#   api      WEB_CONCURRENCY (2) x RAILS_MAX_THREADS (5)          = 10
+#   worker   RAILS_MAX_THREADS (5) = Sidekiq concurrency (3, fixed
+#            in config/sidekiq.yml) + 2 for the outbox reconciliation
+#            loop and Sidekiq's lifecycle/heartbeat threads       =  5
+#   migrate  one-shot, exits before api and worker are healthy    =  2
+#   operator psql / pg_dump / backup headroom                     =  5
+#                                                                 ----
+#   steady-state ceiling                                          = 22 of 97
+#
+# That leaves room for a second api+worker replica pair (15 more) and still
+# stays under budget. The reservation for foreground work is structural, not a
+# quota: api and worker draw from separate per-process pools, so a burst of
+# indexing jobs cannot take the connection a retrieval request needs. Each pool
+# is sized to its own thread count exactly, so a checkout never blocks on a
+# sibling thread in the same process either.
+#
+# One knob drives both processes: RAILS_MAX_THREADS. The api service sets it to
+# its Puma thread count; the worker service sets it to Sidekiq concurrency + 2.
+#
+# Statement and lock timeouts are deliberately not set here. They are per-role
+# server settings: a 30s statement_timeout would abort a ParadeDB BM25 index
+# build during `migrate`, which uses this same configuration.
+
+default: &default
+  adapter: postgresql
+  encoding: unicode
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS", 5) %>
+  # Fail a checkout fast rather than parking a request thread: the tool contract
+  # bounds every call with deadline_ms, so an unbounded wait here would burn the
+  # caller's budget invisibly.
+  checkout_timeout: 5
+  connect_timeout: 5
+  reaping_frequency: 60
+  # Tags every backend in pg_stat_activity so an operator can tell Kioku's
+  # connections from a psql session during an incident.
+  variables:
+    application_name: kioku
+
+development:
+  <<: *default
+  url: <%= kioku_database_url.call(nil) %>
+
+test:
+  <<: *default
+  url: <%= kioku_database_url.call("_test") %>
+  # Tests run against PostgreSQL (plan 4.2); the parallel-test workers each open
+  # their own pool, so keep it small.
+  pool: 5
+
+production:
+  <<: *default
+  url: <%= kioku_database_url.call(nil) %>

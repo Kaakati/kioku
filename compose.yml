@@ -1,0 +1,233 @@
+# Kioku — Docker Compose stack (plan §3, §3.1).
+#
+# Six services: db, redis, migrate (one-shot), api, worker, ui.
+#
+# Credentials come from an untracked `.env` in this directory. Copy `.env.example`
+# to `.env` and fill it in. `.env` is gitignored; only the example is committed.
+#
+#   cp .env.example .env    # then edit the three secrets
+#   docker compose up -d
+#
+# Trust boundary notes (plan §3):
+#   - Only `api` (7310) and `ui` (7311) publish host ports, and only on 127.0.0.1.
+#   - `db` and `redis` are reachable on the internal Compose network only.
+#   - The host Unix socket (KIOKU_SOCKET_PATH) stays on the host and is deliberately
+#     NOT mounted into any container. The host agent reaches `api` over the loopback
+#     bridge on 7310, authenticated with KIOKU_BRIDGE_TOKEN.
+#   - The Docker socket is never mounted and no service is privileged.
+
+name: kioku
+
+services:
+  # ---------------------------------------------------------------------------
+  # db — PostgreSQL 18.6 with ParadeDB's pg_search.
+  # ---------------------------------------------------------------------------
+  db:
+    image: paradedb/paradedb:0.25.9-pg18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kioku}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — copy .env.example to .env and set it}
+      POSTGRES_DB: ${POSTGRES_DB:-kioku_development}
+    volumes:
+      # CRITICAL: this image's PGDATA is /var/lib/postgresql/18/docker, NOT
+      # /var/lib/postgresql/data. Mounting the wrong path makes PostgreSQL
+      # re-run initdb on every start and silently discard all data.
+      # Verified: `postgres --version` => 18.6 (Debian 18.6-1.pgdg13+2), PGDATA
+      # => /var/lib/postgresql/18/docker.
+      - postgres_data:/var/lib/postgresql/18/docker
+    # PostgreSQL's default 64MB /dev/shm in Docker causes "could not resize shared
+    # memory segment" under parallel query. 256MB is a working floor, not a tuned value.
+    shm_size: 256mb
+    healthcheck:
+      # -h 127.0.0.1 is deliberate. During first-boot initdb the entrypoint runs the
+      # server with listen_addresses='' (Unix socket only), so a socket-based
+      # pg_isready would report ready before the database is actually accepting
+      # connections. A TCP check does not.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
+
+  # ---------------------------------------------------------------------------
+  # redis — Sidekiq job transport only. Not an application cache (plan §4.2).
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:8.10.1-trixie
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required — copy .env.example to .env and set it}
+    # REQUIRED alongside the `sh -c` command below. The image's entrypoint only
+    # drops root when its first argument is literally `redis-server`; wrapping the
+    # command in a shell bypasses that check and would otherwise leave redis-server
+    # running as uid 0. Verified: without this line /proc/1/status reports Uid 0.
+    # /data is owned by redis in the image, so a fresh named volume is seeded with
+    # the right ownership. A volume left root-owned by an earlier run must be
+    # recreated (docker compose down -v) or chowned.
+    user: redis
+    # --requirepass reads the environment rather than being written into the command
+    # array, so the resolved secret appears once in `docker compose config` output
+    # (under environment, where the healthcheck needs it) instead of twice. It is NOT
+    # hidden from that output — treat compose config output as sensitive. Redis
+    # scrubs the value from its own argv either way. Compose secrets are the real fix.
+    #
+    # The four flags are required (plan §4.2):
+    #   appendonly yes           durable queue state across restart
+    #   appendfsync everysec     declared fsync policy; may lose ~1s of enqueues,
+    #                            which PostgreSQL outbox reconciliation covers
+    #   maxmemory-policy noeviction  memory pressure must surface as visible enqueue
+    #                            failure, never as silent job eviction
+    command:
+      - sh
+      - -c
+      - >-
+        exec redis-server
+        --appendonly yes
+        --appendfsync everysec
+        --maxmemory-policy noeviction
+        --requirepass "$$REDIS_PASSWORD"
+    volumes:
+      # Redis 8 materialises the AOF under /data/appendonlydir/, so the volume
+      # must cover /data (not the appendonlydir itself).
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # migrate — one-shot schema migration. The ONLY service that touches the schema.
+  #
+  # `api` and `worker` must never migrate at boot: a single serialized migrate
+  # run is what keeps concurrent replicas from racing the schema (plan §3.1).
+  #
+  # Failing visibly: this service has restart: "no", so a non-zero exit is final.
+  # `api` and `worker` gate on service_completed_successfully, so a failed
+  # migration leaves them unstarted and `docker compose up` reports the failed
+  # dependency instead of bringing up a half-migrated stack. To make the exit
+  # code propagate to your shell (CI), use:
+  #     docker compose up --abort-on-container-failure --exit-code-from migrate
+  # ---------------------------------------------------------------------------
+  migrate:
+    build: &backend_build
+      context: ./backend
+      dockerfile: Dockerfile
+    image: kioku/backend:0.1.0
+    restart: "no"
+    command: ["bundle", "exec", "rails", "db:prepare"]
+    environment: &backend_db_env
+      RAILS_ENV: ${RAILS_ENV:-development}
+      RAILS_MAX_THREADS: ${RAILS_MAX_THREADS:-5}
+      # db:prepare handles both cases: an empty volume (load db/structure.sql, then
+      # run pending migrations) and an existing database (run pending migrations).
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-kioku}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — copy .env.example to .env and set it}@db:5432/${POSTGRES_DB:-kioku_development}}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # api — Rails API. Published on loopback only.
+  # ---------------------------------------------------------------------------
+  api:
+    build: *backend_build
+    image: kioku/backend:0.1.0
+    restart: unless-stopped
+    command: ["bundle", "exec", "rails", "server", "-b", "0.0.0.0", "-p", "3000"]
+    environment:
+      <<: *backend_db_env
+      REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required — copy .env.example to .env and set it}@redis:6379/0}
+      # Shared secret for the host agent -> api loopback bridge (plan §3).
+      KIOKU_BRIDGE_TOKEN: ${KIOKU_BRIDGE_TOKEN:?KIOKU_BRIDGE_TOKEN is required — copy .env.example to .env and set it}
+      KIOKU_OBJECT_ROOT: ${KIOKU_OBJECT_ROOT:-/var/lib/kioku/objects}
+    ports:
+      # Loopback only. Binding 0.0.0.0 here would expose the bridge to the LAN.
+      - "127.0.0.1:7310:3000"
+    volumes:
+      - objects_data:${KIOKU_OBJECT_ROOT:-/var/lib/kioku/objects}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      # Deliberately NOT gated on redis. Plan §9 requires the api to start and
+      # serve reads when Redis is unavailable; enqueue failures surface as pending
+      # background work, not as a dead API.
+    healthcheck:
+      # GET /up must confirm real database connectivity and schema presence, not
+      # return 200 unconditionally. curl is installed in the runtime image for this.
+      test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://127.0.0.1:3000/up"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # worker — Sidekiq, same image as api. No published ports.
+  # ---------------------------------------------------------------------------
+  worker:
+    build: *backend_build
+    image: kioku/backend:0.1.0
+    restart: unless-stopped
+    command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+    environment:
+      <<: *backend_db_env
+      REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required — copy .env.example to .env and set it}@redis:6379/0}
+      KIOKU_OBJECT_ROOT: ${KIOKU_OBJECT_ROOT:-/var/lib/kioku/objects}
+    volumes:
+      # Same volume, same non-root user (kioku, uid/gid 1000) as api. The image
+      # creates /var/lib/kioku/objects owned by kioku so Docker seeds the named
+      # volume with that ownership on first use.
+      - objects_data:${KIOKU_OBJECT_ROOT:-/var/lib/kioku/objects}
+    # Sidekiq needs time to finish in-flight jobs on SIGTERM before SIGKILL
+    # (plan §4.2 graceful shutdown).
+    stop_grace_period: 30s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # ui — Next.js management UI. INERT: it is behind the `ui` profile, so
+  # `docker compose up` starts the other five services and skips this one.
+  # Nothing depends on it, so it is never pulled in implicitly.
+  #
+  # Before this can start, ALL of the following must exist:
+  #   1. A ./frontend directory containing the Next.js application
+  #      (package.json, package-lock.json, next.config.*, src/app/...).
+  #   2. Dependencies installed into it, or an install step added to the command.
+  #   3. A dev/start script that binds 0.0.0.0:3000 inside the container
+  #      (`next dev -H 0.0.0.0 -p 3000`), otherwise the published port answers nothing.
+  #   4. An API base URL the browser can reach. The browser is on the host, so it
+  #      must point at http://127.0.0.1:7310 — NOT at http://api:3000, which only
+  #      resolves inside the Compose network.
+  # Then start it with:  docker compose --profile ui up -d
+  #
+  # Once ./frontend/Dockerfile exists, replace image/working_dir/volumes/command
+  # with a build stanza and add a healthcheck (plan §3.1: the UI has its own
+  # healthcheck and an API outage shows as disconnection, not as a UI failure).
+  # ---------------------------------------------------------------------------
+  ui:
+    profiles: ["ui"]
+    image: node:24.19.0-trixie-slim
+    restart: unless-stopped
+    working_dir: /app
+    environment:
+      NODE_ENV: ${RAILS_ENV:-development}
+      # Browser-facing origin of the Rails API (see note 4 above).
+      NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:7310
+    volumes:
+      - ./frontend:/app
+    command: ["npm", "run", "dev"]
+    ports:
+      - "127.0.0.1:7311:3000"
+
+volumes:
+  # A named volume is persistence, not a backup (plan §9). Back PostgreSQL up with
+  # pg_dump against a running server; never copy these data files as ordinary files.
+  postgres_data:
+  redis_data:
+  objects_data:

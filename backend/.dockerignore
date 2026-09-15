@@ -1,0 +1,56 @@
+# Build context for the Kioku backend image.
+#
+# Keep Gemfile, Gemfile.lock, app/, lib/, config/, db/, bin/ and test/ — the image
+# is expected to be able to run the Minitest suite against PostgreSQL as well as
+# serve the API.
+
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Secrets and local configuration. Credentials reach containers through Compose
+# environment, never baked into a layer.
+.env
+.env.*
+!.env.example
+config/master.key
+config/credentials/*.key
+
+# Bundler state that must not leak into the image
+.bundle
+vendor/bundle
+vendor/cache
+
+# Runtime state regenerated inside the container
+tmp/
+log/
+storage/
+db/*.sqlite3
+db/*.sqlite3-*
+public/assets
+public/packs
+
+# Local object store — never part of an image
+objects/
+
+# Test and analysis output
+coverage/
+test/reports/
+.rubocop_cache/
+.byebug_history
+
+# Node (only relevant if any tooling lands here)
+node_modules/
+
+# Editor and OS noise
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Container build files themselves
+Dockerfile
+.dockerignore

@@ -1,0 +1,135 @@
+# =============================================================================
+# Line endings
+# =============================================================================
+# This repository is authored on Windows (core.autocrlf=true) but every artifact
+# it produces runs on Linux containers: shell scripts, Ruby executables with
+# shebangs (backend/bin, integration/claude/bin), Dockerfiles and entrypoints.
+#
+# A CRLF shebang is not a shebang. `#!/usr/bin/env ruby\r` makes the kernel look
+# for an interpreter literally named "ruby\r" and the container exits with
+# "no such file or directory" naming a binary that plainly exists. The same
+# applies to heredocs and `set -e` scripts baked into images.
+#
+# Attributes override core.autocrlf, so this file makes the checkout LF for
+# everyone regardless of local git configuration.
+#
+# NOTE: adding this file to an existing CRLF checkout does not rewrite the
+# working tree by itself. Renormalise once:
+#
+#     git add --renormalize .
+#     git status            # review, then commit the normalisation separately
+#
+* text=auto eol=lf
+
+
+# =============================================================================
+# Explicitly text, LF — files where a CRLF would break execution or tooling
+# =============================================================================
+*.sh              text eol=lf
+*.bash            text eol=lf
+*.rb              text eol=lf
+*.rake            text eol=lf
+*.ru              text eol=lf
+*.gemspec         text eol=lf
+Gemfile           text eol=lf
+Gemfile.lock      text eol=lf
+Rakefile          text eol=lf
+.ruby-version     text eol=lf
+
+Dockerfile        text eol=lf
+Dockerfile.*      text eol=lf
+*.dockerfile      text eol=lf
+.dockerignore     text eol=lf
+compose.yml       text eol=lf
+compose*.yml      text eol=lf
+compose*.yaml     text eol=lf
+*.yml             text eol=lf
+*.yaml            text eol=lf
+
+*.sql             text eol=lf
+*.js              text eol=lf
+*.mjs             text eol=lf
+*.cjs             text eol=lf
+*.jsx             text eol=lf
+*.ts              text eol=lf
+*.tsx             text eol=lf
+*.json            text eol=lf
+*.css             text eol=lf
+*.html            text eol=lf
+*.md              text eol=lf
+*.toml            text eol=lf
+*.erb             text eol=lf
+
+.env.example      text eol=lf
+.gitignore        text eol=lf
+.gitattributes    text eol=lf
+
+# Executables without an extension. Both bin directories hold shebang scripts.
+backend/bin/*             text eol=lf
+integration/claude/bin/*  text eol=lf
+
+
+# =============================================================================
+# Explicitly text, CRLF — files consumed by Windows interpreters
+# =============================================================================
+*.bat             text eol=crlf
+*.cmd             text eol=crlf
+*.ps1             text eol=crlf
+*.psm1            text eol=crlf
+
+
+# =============================================================================
+# Binary — never normalise, never diff as text
+# =============================================================================
+*.png             binary
+*.jpg             binary
+*.jpeg            binary
+*.gif             binary
+*.webp            binary
+*.bmp             binary
+*.ico             binary
+*.icns            binary
+*.svgz            binary
+*.pdf             binary
+
+*.woff            binary
+*.woff2           binary
+*.ttf             binary
+*.otf             binary
+*.eot             binary
+
+*.zip             binary
+*.gz              binary
+*.tgz             binary
+*.bz2             binary
+*.xz              binary
+*.7z              binary
+*.tar             binary
+
+*.so              binary
+*.dylib           binary
+*.dll             binary
+*.exe             binary
+*.bundle          binary
+*.gem             binary
+*.class           binary
+*.jar             binary
+*.wasm            binary
+
+*.db              binary
+*.sqlite          binary
+*.sqlite3         binary
+*.dump            binary
+
+*.mp3             binary
+*.mp4             binary
+*.mov             binary
+*.webm            binary
+
+
+# =============================================================================
+# Leave bytes alone without treating them as binary
+# =============================================================================
+# Patches carry their own line endings; normalising them corrupts the patch.
+*.patch           -text
+*.diff            -text

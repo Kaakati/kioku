@@ -1,0 +1,91 @@
+# Kioku — example local development override.
+#
+#   cp compose.override.yml.example compose.override.yml
+#
+# Compose picks up `compose.override.yml` automatically and merges it over
+# compose.yml, so no -f flags are needed. The real override file is gitignored;
+# production runs the built images with compose.yml alone (plan §3.1).
+#
+# Everything here is opt-in. Delete the blocks you do not want.
+
+services:
+  # ---------------------------------------------------------------------------
+  # Live source, no rebuild between edits.
+  #
+  # ./backend is mounted over /rails, so the container runs the working tree.
+  # Installed gems live at /usr/local/bundle, outside /rails, so the mount does
+  # not shadow them and no anonymous volume workaround is needed.
+  #
+  # After changing Gemfile or Gemfile.lock you must still rebuild:
+  #     docker compose build && docker compose up -d
+  #
+  # On Docker Desktop for Windows/macOS the bind mount is slower than the image
+  # layer and host file ownership is remapped; if the container cannot write
+  # /rails/tmp, that is the cause.
+  # ---------------------------------------------------------------------------
+  migrate:
+    volumes:
+      - ./backend:/rails
+
+  api:
+    volumes:
+      - ./backend:/rails
+    environment:
+      # Rails' code reloader is what makes the mount useful; without it the
+      # process keeps serving the code it booted with.
+      RAILS_ENV: development
+
+  worker:
+    volumes:
+      - ./backend:/rails
+    environment:
+      RAILS_ENV: development
+    # Sidekiq does not reload code. Restart the worker after editing jobs or
+    # services it runs:  docker compose restart worker
+
+  # ---------------------------------------------------------------------------
+  # Direct database and queue access from the host, for psql, a GUI client or
+  # redis-cli. Loopback only — compose.yml publishes no ports for these on
+  # purpose, and this override is the deliberate, local exception.
+  #
+  #   psql "postgres://kioku:<POSTGRES_PASSWORD>@127.0.0.1:7432/kioku_development"
+  #   redis-cli -h 127.0.0.1 -p 7379 -a "<REDIS_PASSWORD>"
+  #
+  # 7432/7379 rather than 5432/6379 so this never collides with a PostgreSQL or
+  # Redis already running on the host.
+  # ---------------------------------------------------------------------------
+  db:
+    ports:
+      - "127.0.0.1:7432:5432"
+
+  redis:
+    ports:
+      - "127.0.0.1:7379:6379"
+
+# -----------------------------------------------------------------------------
+# The `ui` service
+# -----------------------------------------------------------------------------
+# `ui` sits behind the `ui` profile in compose.yml and stays inert until the
+# ./frontend application exists (see the comment on the service for the full
+# prerequisite list). It is not enabled here because an override cannot make a
+# missing application run. Once ./frontend is real, start it explicitly:
+#
+#     docker compose --profile ui up -d
+#
+# and the other five services continue to behave exactly as before.
+
+# -----------------------------------------------------------------------------
+# A slimmer, production-shaped image
+# -----------------------------------------------------------------------------
+# The default build installs every bundle group so the image can run the Minitest
+# suite against PostgreSQL. To build without development/test gems, set the build
+# argument on all three backend services and switch RAILS_ENV, which then also
+# requires SECRET_KEY_BASE:
+#
+#   api:
+#     build:
+#       args:
+#         BUNDLE_WITHOUT: "development:test"
+#     environment:
+#       RAILS_ENV: production
+#       SECRET_KEY_BASE: "<generate with: rails secret>"

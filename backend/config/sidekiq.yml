@@ -1,0 +1,21 @@
+# Bounded background concurrency (plan 4.2). Three threads, sized together with
+# the worker's Active Record pool: RAILS_MAX_THREADS on the worker service is 5
+# = these 3 threads + the outbox reconciliation loop + Sidekiq's own lifecycle
+# thread. See the arithmetic in config/database.yml.
+:concurrency: 3
+
+# Compose stops the worker with SIGTERM. Give an in-flight job time to finish
+# and push the rest back to Redis rather than leaving them in flight.
+:timeout: 25
+
+# Bounded retries with a visible terminal state: exhausted jobs land in the dead
+# set for operator inspection instead of retrying indefinitely (plan 4.2).
+:max_retries: 10
+
+# Weights, not priorities: Sidekiq checks `default` three times as often as
+# `maintenance`, so foreground-facing work is not starved by a large indexing
+# backlog, while maintenance still makes progress.
+:queues:
+  - [default, 3]
+  - [indexing, 2]
+  - [maintenance, 1]

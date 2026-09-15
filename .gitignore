@@ -1,0 +1,108 @@
+# =============================================================================
+# Secrets and local environment
+# =============================================================================
+.env
+.env.*
+!.env.example
+
+# Compose local overrides (the example is committed)
+compose.override.yml
+compose.override.yaml
+docker-compose.override.yml
+!compose.override.yml.example
+
+# Rails credentials
+backend/config/master.key
+backend/config/credentials/*.key
+
+
+# =============================================================================
+# Ruby / Rails
+# =============================================================================
+*.gem
+*.rbc
+.bundle/
+vendor/bundle/
+vendor/cache/
+.ruby-gemset
+
+backend/tmp/
+backend/log/
+backend/storage/
+backend/public/assets/
+backend/public/packs/
+backend/db/*.sqlite3
+backend/db/*.sqlite3-*
+
+# Do not ignore the empty-directory keep files if they are ever added
+!**/.keep
+
+# Test and analysis output
+coverage/
+backend/test/reports/
+.rubocop_cache/
+.byebug_history
+.rspec_status
+
+
+# =============================================================================
+# Local object store and spool — retained evidence bytes, never committed
+# =============================================================================
+objects/
+backend/objects/
+.kioku/
+*.spool
+
+
+# =============================================================================
+# Node / Next.js (frontend, and any host tooling)
+# =============================================================================
+node_modules/
+.npm
+.pnpm-store/
+.yarn/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.turbo/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+
+# =============================================================================
+# Docker
+# =============================================================================
+# Local bind-mounted data directories, if anyone creates them instead of using
+# the named volumes. Named volumes themselves live outside the repository.
+docker-data/
+.docker/
+
+
+# =============================================================================
+# Editors and IDEs
+# =============================================================================
+.idea/
+.vscode/
+!.vscode/extensions.json
+*.iml
+*.swp
+*.swo
+*~
+.\#*
+\#*\#
+
+
+# =============================================================================
+# Operating systems
+# =============================================================================
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/

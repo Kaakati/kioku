@@ -1,0 +1,28 @@
+#!/bin/sh
+set -eu
+
+# Shared entrypoint for the migrate, api and worker services: all three run the
+# same image and differ only in the command Compose gives them.
+
+# Fail fast and legibly rather than letting Active Record raise a backtrace about
+# a missing adapter.
+if [ -z "${DATABASE_URL:-}" ]; then
+  echo "kioku: DATABASE_URL is required" >&2
+  exit 1
+fi
+
+# A fresh container (or a rebuilt image over an existing volume) may have no tmp
+# tree at all.
+mkdir -p tmp/pids tmp/cache
+
+# A container killed rather than stopped leaves a pid file behind that would
+# make Puma refuse to start.
+case "${1:-}" in
+  ./bin/rails | bin/rails | rails)
+    rm -f tmp/pids/server.pid
+    ;;
+esac
+
+# Migrations are the one-shot `migrate` service's job. Running them here would
+# let api and worker migrate concurrently on every restart.
+exec "$@"

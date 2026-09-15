@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kioku.local/contracts/context_remember.v1.json",
+  "title": "context_remember request",
+  "description": "Commit one evidence-linked durable memory revision to an explicitly named project or global destination. saved is returned only after canonical commit; queued only after durable host enqueue.",
+  "type": "object",
+  "properties": {
+    "envelope": { "$ref": "envelope.v1.json#/$defs/mutation_envelope" },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "decision", "constraint", "correction", "attempt",
+        "observation", "procedure", "task_checkpoint"
+      ]
+    },
+    "destination": { "$ref": "#/$defs/destination" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "body": { "type": "string", "minLength": 1, "maxLength": 16384 },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": { "$ref": "envelope.v1.json#/$defs/evidence_link" }
+    },
+    "applicability": { "$ref": "#/$defs/applicability_conditions" },
+    "memory_key": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+    "lifecycle": {
+      "type": "string",
+      "enum": ["proposed", "active"],
+      "description": "Assistant-authored global records default to proposed and do not become governing user preferences by repetition."
+    },
+    "rationale": { "type": ["string", "null"], "maxLength": 8192 },
+    "tradeoffs": { "type": ["string", "null"], "maxLength": 8192 },
+    "valid_from": { "type": ["string", "null"], "format": "date-time" },
+    "valid_until": { "type": ["string", "null"], "format": "date-time" },
+    "links": { "$ref": "#/$defs/links" },
+    "derivative": { "$ref": "#/$defs/derivative" },
+    "override": { "$ref": "#/$defs/override" },
+    "mandatory": {
+      "type": "boolean",
+      "description": "User authority only. An assistant actor setting it returns kioku.authority_violation."
+    },
+    "origin_project_key": {
+      "type": ["string", "null"],
+      "maxLength": 128,
+      "description": "Provenance on a global record. Distinct from ownership."
+    },
+    "task_key": { "type": ["string", "null"], "maxLength": 128 },
+    "source_anchor": { "type": ["object", "null"] },
+    "attempt": { "$ref": "#/$defs/attempt" },
+    "token_budget": { "type": ["integer", "null"], "minimum": 1 }
+  },
+  "required": ["envelope", "kind", "destination", "title", "body", "evidence"],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": { "properties": { "destination": { "properties": { "store_kind": { "const": "global" } } } } },
+      "then": { "required": ["applicability"] }
+    }
+  ],
+  "$defs": {
+    "destination": {
+      "type": "object",
+      "description": "Exactly one destination. store_kind=project requires project_key; store_kind=global requires category and carries no owner project. An absent or ambiguous project binding returns kioku.project_binding_unresolved and is never read as permission to write globally.",
+      "properties": {
+        "store_kind": { "type": "string", "enum": ["project", "global"] },
+        "project_key": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+        "category": { "$ref": "envelope.v1.json#/$defs/global_category" }
+      },
+      "required": ["store_kind"],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "store_kind": { "const": "project" } } },
+          "then": { "required": ["project_key"] }
+        },
+        {
+          "if": { "properties": { "store_kind": { "const": "global" } } },
+          "then": { "required": ["category"] }
+        }
+      ]
+    },
+    "applicability_conditions": {
+      "type": "object",
+      "description": "Required on global records. A global record without applicability conditions is refused.",
+      "properties": {
+        "languages": { "type": "array", "items": { "type": "string" }, "maxItems": 32 },
+        "frameworks": { "type": "array", "items": { "type": "string" }, "maxItems": 32 },
+        "version_constraints": { "type": "array", "items": { "type": "string" }, "maxItems": 32 },
+        "platforms": { "type": "array", "items": { "type": "string" }, "maxItems": 32 },
+        "conditions": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      },
+      "required": ["conditions"],
+      "additionalProperties": false
+    },
+    "links": {
+      "type": "object",
+      "properties": {
+        "supersedes": { "type": "array", "items": { "type": "string" }, "maxItems": 32 },
+        "derived_from": { "type": "array", "items": { "type": "string" }, "maxItems": 32 },
+        "constrains": { "type": "array", "items": { "type": "string" }, "maxItems": 32 },
+        "proposed_for": { "type": "array", "items": { "type": "string" }, "maxItems": 32 },
+        "rejected_in": { "type": "array", "items": { "type": "string" }, "maxItems": 32 }
+      },
+      "additionalProperties": false
+    },
+    "derivative": {
+      "type": "object",
+      "description": "The split write: a local application record plus a reusable global record joined by provenance. The global side carries the reusable statement, rationale, applicability and a permitted excerpt only; it never copies project logs, private paths or source wholesale.",
+      "properties": {
+        "publish_global": { "type": "boolean" },
+        "category": { "$ref": "envelope.v1.json#/$defs/global_category" },
+        "source_revision": { "type": ["integer", "null"], "minimum": 1 },
+        "permitted_excerpt": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "body": { "type": "string", "minLength": 1, "maxLength": 16384 },
+        "rationale": { "type": ["string", "null"], "maxLength": 8192 },
+        "tradeoffs": { "type": ["string", "null"], "maxLength": 8192 },
+        "applicability": { "$ref": "#/$defs/applicability_conditions" }
+      },
+      "required": ["publish_global", "category", "title", "body", "applicability"],
+      "additionalProperties": false
+    },
+    "override": {
+      "type": "object",
+      "description": "The project-exception variant. Writes a project-owned override row and leaves the global revision unchanged.",
+      "properties": {
+        "target_global_memory_key": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "target_revision": { "type": "integer", "minimum": 1 },
+        "replacement_body": { "type": ["string", "null"], "maxLength": 16384 },
+        "exclusion": { "type": "boolean" },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "authority_basis": { "type": ["string", "null"], "maxLength": 1024 },
+        "validity_interval": {
+          "type": "object",
+          "properties": {
+            "valid_from": { "type": ["string", "null"], "format": "date-time" },
+            "valid_until": { "type": ["string", "null"], "format": "date-time" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": ["target_global_memory_key", "target_revision", "reason"],
+      "additionalProperties": false
+    },
+    "attempt": {
+      "type": ["object", "null"],
+      "description": "Carried on kind=attempt. A rejected attempt retains why it failed so an unchanged retry is recognizable as repetition.",
+      "properties": {
+        "problem": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "hypothesis": { "type": ["string", "null"], "maxLength": 4096 },
+        "actions": { "type": "array", "items": { "type": "string" }, "maxItems": 64 },
+        "observations": { "type": "array", "items": { "type": "string" }, "maxItems": 64 },
+        "verdict": { "type": "string", "enum": ["open", "succeeded", "failed", "abandoned"] },
+        "retry_conditions": { "type": ["string", "null"], "maxLength": 4096 }
+      },
+      "required": ["problem", "verdict"],
+      "additionalProperties": false
+    }
+  }
+}

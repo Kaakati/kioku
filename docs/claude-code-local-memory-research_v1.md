@@ -1,10 +1,24 @@
 # Evidence-Guided Memory and Problem Solving for Claude Code
 
+**Status:** Current as the research and evidence-model reference; superseded on stack selection.
+**Superseding document:** [Kioku Architectural Plan](kioku-architectural-plan_v1.md), 15 September 2026, referred to below as **Plan**.
+**Revised:** 15 September 2026 — supersession marked; no research content changed.
+
+The evidence model, task-contract model, research synthesis and evaluation design in this document remain governing. The **implementation stack does not.** The Plan selects Ruby on Rails, PostgreSQL with ParadeDB, Sidekiq/Redis and Docker Compose in place of the Rust core and SQLite ledger proposed here. Passages carrying the superseded stack are marked inline **[Superseded → Plan §n]**; the surrounding requirement usually survives the substitution, and the marker says which part does not.
+
+Two **capability** decisions are also recorded inline and are not stack substitutions. Embeddings, vector and hybrid retrieval and ANN are **removed from scope** (§§1, 4, 5, 15, 17) — not deferred, not gated by measured benefit; this release does not address semantic recall. Arabic normalization is **dropped as a requirement** (§9). Each marker says which kind of change it records.
+
+Section and appendix numbering is fixed. The Plan cites this document by number in ten places, and renumbering would silently break those references.
+
+The SQL excerpts in Appendices A, C and D are **semantic specifications** — identities, constraints, state machines, coverage and publication rules — expressed in SQLite dialect. Translate their meaning to PostgreSQL; do not implement their dialect. Where SQLite's single-writer model is load-bearing in the prose, the marker says so, because PostgreSQL's concurrent writers change the obligation rather than remove it.
+
 ## 1. Recommended system and expected benefit
 
 Build a local application that connects **task continuity, code intelligence, solution discovery, and verification** through one evidence model. Its job is to help Claude recover relevant history, identify what remains unknown, compare plausible fixes, obtain useful observations, and report what those observations actually establish.
 
 The recommended foundation is a native Rust host agent and thin Claude Code adapters, a Docker Compose deployment containing a Rust core and a Next.js/shadcn management UI, a canonical SQLite ledger, rebuildable repository indexes, and retained evidence objects. Exact lookup, FTS5, and bounded typed graph traversal form the default retrieval path. Embeddings and precise language resolvers remain optional extensions.
+
+> **[Superseded → Plan §1, §5.4]** The Plan keeps thin host adapters, Compose, the Next.js/shadcn UI, a canonical ledger, rebuildable indexes and retained evidence objects. It replaces the Rust core with a Rails API service, the SQLite ledger with PostgreSQL, and FTS5 with ParadeDB. Embeddings do not move from optional extension to anything — they are **removed from scope**, along with vector and hybrid retrieval and ANN, so the "optional versioned vector indexes" in the decision table below have no counterpart in the Plan. ParadeDB supplies the lexical/BM25 leg and the columnar analytics on its own; precise language resolvers and rerankers stay conditional exactly as this document has them. The retrieval shape — exact lookup first, then lexical, then bounded traversal — is unchanged.
 
 The largest expected accuracy benefit comes from retaining information that is otherwise easily lost: the current objective, governing constraints, rejected attempts, user corrections, observed outcomes, and reasons a proposed solution remains uncertain. Code indexing grounds that information in the implementation. A new task-and-verification layer connects it to the next useful action.
 
@@ -15,7 +29,7 @@ The system should optimize **successfully completed tasks with fewer unsupported
 | Decision | Recommended baseline |
 |---|---|
 | Product | Persistent memory, source grounding, candidate discovery, and scoped verification in one system |
-| Deployment | Claude on macOS or Linux/WSL; native Rust bridge; Rust core and Next.js UI in Compose |
+| Deployment | Claude on macOS or Linux/WSL; native Rust bridge; Rust core and Next.js UI in Compose **[Superseded → Plan §3.1: Ruby host adapters; `db`, `redis`, `migrate`, `api`, `worker`, `ui` services]** |
 | Canonical authority | One installation ledger for accepted records, evidence metadata, task contracts, and mutation receipts |
 | Derived storage | One rebuildable code database per repository; optional versioned vector indexes |
 | Retrieval | Exact identifiers, lexical search, bounded graph neighborhoods, progressive evidence fetch |
@@ -84,6 +98,8 @@ The core can identify structured gaps: a required criterion with no observation,
 
 ## 4. Runtime architecture and implementation stack
 
+> **[Superseded → Plan §3, §4]** This section's *runtime choices* are replaced wholesale; its *responsibilities, trust boundaries and transport constraints* are retained. The four component names (`contextctl`, `context-mcp`, `context-agent`, `context-core`) survive as role names, with `context-core` becoming the Rails API + Sidekiq worker sharing one backend image, and the first three becoming lightweight Ruby host adapters that do not boot Rails on the hook path. The private host socket, the loopback core bridge, the rule that hooks never `docker exec` or scan, and the separation of latency-sensitive control messages from bulk transfer all stand unchanged. Read the tables below for *what each component owes*, not for what it is written in.
+
 ### Components and transport
 
 | Component | Runtime | Responsibility |
@@ -116,6 +132,8 @@ Hooks never invoke `docker exec`, launch a model, run a parser, or scan the repo
 
 ### Selected libraries and ownership
 
+> **[Superseded → Plan §4.2]** The library slate below is Rust-specific and no longer selected. What carries forward is the *selection discipline*: pin every version and native build input, keep one owner per concern, and qualify beta or version-dependent features before release. Tree-sitter survives as the parser family; BLAKE3 survives as content addressing; the rest have Ruby/PostgreSQL counterparts chosen in the Plan.
+
 Use `rmcp`, `rusqlite`, Tree-sitter, a bounded Rayon pool, `notify`, `ignore`, `gix`, and BLAKE3. Pin their versions and native build inputs. `rmcp` supplies the official Rust MCP implementation; the other libraries provide SQLite access, parsing support, parallelism, filesystem integration, and content addressing.[^15][^16][^17][^18][^19]
 
 Rust is recommended for deployment simplicity, native integration, and resource control. No assumption is made that every binary is fully static or that only Rust can meet the latency target. A thin Go client could also be viable; introducing several runtime languages into the hot path has no demonstrated benefit here. Python remains suitable for an optional evaluation or model worker, and Next.js belongs in the management surface.
@@ -128,7 +146,9 @@ Reserve foreground capacity for retrieval, source validation, and small canonica
 
 Use libraries for storage and parsing; implement the evidence and task coordination layer. Claude-Mem is a memory UX comparator, Context Mode and RTK are output-retention/reduction comparators, and Serena is a possible semantic-navigation adapter.[^20][^21][^22][^23] Compare each independently. Installing all of them together is not the architecture.
 
-SQLite remains the default. Reconsider a dedicated vector or graph engine only for a measured workload that the baseline fails to serve. The original stack-graphs and Kuzu repositories are archived and should not be new default dependencies.[^24] This maintenance decision does not imply that every graph database or successor project is unsuitable.
+SQLite remains the default. Reconsider a dedicated vector or graph engine only for a measured workload that the baseline fails to serve.
+
+> **[Superseded → Plan §5.1, §5.4]** PostgreSQL with ParadeDB is the default store. The *argument* is unchanged and now discharged differently: one database serves exact lookup, lexical/BM25 retrieval and columnar aggregation, so no separate search cluster is planned. The sentence above is settled in the other direction too — vector search is not an extension awaiting a measured workload, it is **out of scope**, so no dedicated vector engine is planned either. The obligation to qualify version-dependent and beta features before release is not affected by that removal and stands as written; it now attaches to the ParadeDB search features actually relied on. The original stack-graphs and Kuzu repositories are archived and should not be new default dependencies.[^24] This maintenance decision does not imply that every graph database or successor project is unsuitable.
 
 ## 5. Persistence, evidence, and the meaning of truth
 
@@ -136,7 +156,7 @@ SQLite remains the default. Reconsider a dedicated vector or graph engine only f
 
 | Store | Contents | Durability policy |
 |---|---|---|
-| `memory.sqlite` | Identities, events, evidence metadata, memory revisions, task contracts, candidates, checks, disputes, receipts | Canonical; WAL with `synchronous=FULL` |
+| `memory.sqlite` **[→ Plan §5.1: PostgreSQL, one database, project/global namespaces]** | Identities, events, evidence metadata, memory revisions, task contracts, candidates, checks, disputes, receipts | Canonical; WAL with `synchronous=FULL` |
 | Canonical search projections | Current memory, task, and retained-case search documents | Updated transactionally; rebuildable |
 | Repository code databases | Source mappings, symbols, occurrences, lexical chunks, typed code edges, coverage | Rebuildable; WAL `NORMAL` can be acceptable |
 | Content-addressed objects | Retained source, test reports, public handoffs, permitted tool output | Durable bytes before public evidence references |
@@ -146,6 +166,16 @@ SQLite remains the default. Reconsider a dedicated vector or graph engine only f
 Keep container-owned data in a named volume. Approved source is ingested through the host agent by default; a read-only bind-mount profile can be separately qualified. Docker documents persistent-volume and WSL filesystem considerations.[^25][^26]
 
 SQLite allows one writer per database with concurrent readers in WAL mode. `NORMAL` can lose committed transactions after a power/system failure even while maintaining consistency, so use `FULL` for non-reconstructable accepted memories and task records.[^27][^28] Bundle a maintained SQLite build containing the WAL-reset fix introduced in 3.51.3 or a verified patched branch.[^29] Lock waits must fit the request deadline; a five-second busy timeout does not belong on a 150 ms hook path.
+
+> **[Superseded → Plan §4.2, §5.1]** This paragraph is the one place where the stack change alters an *obligation* rather than a name, so read the substitution carefully.
+>
+> PostgreSQL supports concurrent writers. The single-writer serialization that this document relied on to order canonical mutations is **gone, and was doing real work** — it made "one writer owns each database" free. Under PostgreSQL that guarantee must be re-established explicitly, through transactions, row-level locking, expected-revision checks and uniqueness constraints. Every invariant this document states about revision ordering, idempotency keys and outbox publication still holds; only the mechanism that enforced them changes, and it now has to be written down rather than inherited from the engine.
+>
+> The ORM is named, and it is the only one: **Active Record with the `pg` adapter**. Schema changes go through Active Record migrations; PostgreSQL-specific constraints, search indexes and functions land via `structure.sql`. There is no second ORM, no raw-SQL data layer and no repository framework layered over Active Record. That is also where the re-establishment above has to be done — the ordering guarantees this document inherited free from SQLite's single-writer model are reconstructed out of Active Record transactions, explicit row locks, optimistic expected-revision checks and database uniqueness constraints, not out of the engine's concurrency model.
+>
+> The "Optional vector indexes" row in the table above has no counterpart in the Plan: embeddings and ANN structures are out of scope, so that derived store does not exist and its generation manifests are not something to build. See the §15 marker for what was and was not established before the capability was dropped.
+>
+> The durability tuning (`synchronous=FULL`, WAL mode, the 3.51.3 fix) is SQLite-specific and does not carry over; PostgreSQL's equivalent is its own `synchronous_commit` and WAL configuration, qualified separately. The deadline discipline in the last sentence is **not** superseded and is arguably more important now: a lock wait that does not fit the request deadline is a worse failure against a networked database than against a local file.
 
 Commit canonical changes and outbox jobs together. Publish derived repository transactions separately, then record receipts. There is no cross-database atomicity claim. Jobs carry input identities, configuration versions, deletion epochs, and expected publication generations. A late job is discarded or retained historically.
 
@@ -215,8 +245,8 @@ Correlate a planned check with a real tool event and retained report using quali
 | Exact source/schema inspection | A declaration, constraint, mapping, or configuration exists in a checked snapshot | Existence alone does not prove behavior |
 | Existing regression/integration test | Named assertions and results for a specific run | Can miss the defect or use unrepresentative fixtures |
 | Compiler/typechecker/analyzer | Supported static properties under a recorded configuration | Successful analysis is not full task correctness |
-| Property-based testing | Generated cases that challenge a stated invariant, with minimized counterexamples | Quality depends on the property and generator; Proptest is a suitable Rust-core option[^31] |
-| Targeted mutation testing | Whether selected deliberate defects are detected by tests | Surviving/equivalent mutations require interpretation; cargo-mutants is an optional Rust test-quality tool[^32] |
+| Property-based testing | Generated cases that challenge a stated invariant, with minimized counterexamples | Quality depends on the property and generator; Proptest is a suitable Rust-core option[^31] **[Tool superseded → Ruby equivalent selected in Plan §11 Phase 0; the method is unchanged]** |
+| Targeted mutation testing | Whether selected deliberate defects are detected by tests | Surviving/equivalent mutations require interpretation; cargo-mutants is an optional Rust test-quality tool[^32] **[Tool superseded → Ruby equivalent; the method is unchanged]** |
 | Constraint solving | Satisfiability or counterexamples for a formalized bounded problem | A tool such as Z3 proves properties of the encoded model, not unmodeled application behavior[^33] |
 | Human review | Explicit acceptance of a design tradeoff or observable requirement | Preserve the reviewer, scope, and rationale; do not relabel it as an execution result |
 
@@ -255,6 +285,8 @@ Claude synthesizes a new candidate when existing cases are insufficient. Record 
 | Verdict and retry conditions | Prevent repetition of a failed approach under unchanged conditions |
 
 Search local sources in this order: exact error/path/symbol and current task; relevant rejected attempts and decisions; structurally related implementation/tests; compatible retained solution cases; then broader lexical or optional semantic recall. Retrieval order is a default policy, not a requirement to issue five calls on every task.
+
+> **[Substitute → Plan §5.4]** The final step is broader lexical retrieval. Optional semantic recall is out of scope, so the order terminates one step earlier than written. The ordering discipline and the limit it carries — this is a default policy, not an instruction to issue five calls on every task — are unchanged.
 
 A similar past symptom is insufficient for reuse. Match preconditions and dependencies. A solution for an older framework, a different database, or a sequential workload may be a useful hypothesis while failing present applicability. Keep contradictory cases available in solution mode even when they would be excluded from an ordinary factual capsule.
 
@@ -356,6 +388,8 @@ Notifications are hints. Overflow, disconnection, external Git operations, and e
 
 Initial retrieval uses exact paths/logical keys, identifier terms split from CamelCase and snake_case, and optional trigram substrings. Prose has a separate FTS configuration. FTS5 trigram matching needs at least three characters for substring queries; short identifiers need exact/token routes. BM25 ordering and Unicode normalization must be handled deliberately. Porter stemming is English-oriented, and `unicode61` is not a full Arabic normalization strategy.[^41]
 
+> **[Superseded → Plan §5.4]** ParadeDB/`pg_search` replaces FTS5, so the specific mechanics change: the three-character trigram floor, the `unicode61` tokenizer and SQLite's BM25 implementation are all FTS5 facts. **The requirements they encode do not change, and one of them is easy to lose in translation:** short identifiers still need an exact/token route that does not depend on substring matching, and BM25 ordering and Unicode normalization still need deliberate configuration rather than defaults. ParadeDB exposes its own tokenizers and filters — confirm the selected configuration actually does what is asked of it rather than assuming the move to ParadeDB settled it. The observation above about Porter stemming and `unicode61` records what the research found and stays; Arabic normalization, however, is **not** carried forward as a requirement. It is dropped: not an open obligation, not a release gate. The **"Optional semantic recall"** cell in the Markdown/ADRs row of the table above has no counterpart in the Plan either — semantic recall is removed from scope, not held as a conditional extension; see the §15 marker.
+
 ### One logical graph, several durable owners
 
 | Edge family | Examples | Owner and interpretation |
@@ -430,6 +464,8 @@ These are subsystem settings, not model context limits or established optima. Ac
 Route exact identifiers and paths directly; continuation to task state; rationale questions to decisions/attempts; solution questions to applicable cases and code. Start with approximately 40 lexical candidates, ten graph seeds, one default hop, two maximum hops for explicit relationship queries, and 200 visited edges. Tune these limits against recall and latency; do not imply exhaustive traversal.
 
 Hard access, deletion, scope, and validity gates precede final ranking. Use stable tie-breaking and diversity limits so high-degree utility symbols do not dominate. Optional multi-route ranking can use reciprocal-rank fusion rather than summing incomparable BM25, graph, and cosine scores. Treat weights as experimental policy, not truth scores.
+
+> **[Substitute → Plan §5.4]** There is no cosine route. The routes are exact lookup, ParadeDB BM25/lexical, and bounded typed traversal, so multi-route fusion now spans two comparable-in-kind ranked lists rather than three. The caution survives and still applies: do not sum scores from incomparable scales, and do not read a fused weight as a truth score.
 
 Select a bounded evidence set, validate current dependencies, then repack with honest status labels. Reserve tokens for provenance, gaps, and omitted-result notices. Important contradictory evidence must not disappear merely because a positive result ranks higher. If adequate evidence cannot fit, return a narrower claim and a fetch handle.
 
@@ -567,6 +603,8 @@ The UI may create or amend check plans and attach evidence. A “run” workflow
 
 ### Measured boundaries and initial targets
 
+> **[Requalify → Plan §10]** These targets were reasoned from native binary startup and in-process SQLite. Ruby process startup, Rails/Puma, a networked PostgreSQL and the host transport have different cost structures, so the numbers below are **inherited assumptions, not inherited budgets** — the Plan carries them forward explicitly as unrequalified. The ≤25 ms spool and ≤100 ms hook figures are the ones most exposed to the change. Two mitigations are already committed: Rails stays out of the hook CLI, and the adapters are warm long-lived processes. If measurement shows the enhancement deadline cannot be met, the required behavior is unchanged — return no enhancement and report capture status honestly, rather than relaxing the deadline.
+
 | Operation | Initial target | Boundary |
 |---|---:|---|
 | Small event to durable host spool | p95 ≤25 ms | Native startup, local transport, persistence |
@@ -603,6 +641,12 @@ For illustration, reducing a 12,000-token result to 600 removes 11,400 result to
 | Reranking or distillation | Net benefit after inference cost and unsupported-claim risk |
 | Additional critique agents | Better task outcomes after shared-evidence and total-cost accounting |
 | Idle wake integration | Qualified client support, explicit enablement, interruption limits, useful outcomes |
+
+> **[Partly superseded → Plan §5.4]** Two rows of the table above are no longer conditional — not because they were adopted, but because they were dropped. **Local exact embeddings** and **ANN, such as USearch** are **removed from scope**: the Plan specifies no embedding generation, no embedding model, no vector or hybrid retrieval and no ANN index. This is removal, not deferral, and not a gate left standing for later — there is no configuration under which the Plan turns them on. The honest reading is that this table's own adoption gate for embeddings — *repeatable improvement on actual semantic-recall failures beyond lexical/graph retrieval* — was **never discharged**. No such measurement was taken, in either direction. The capability is dropped rather than qualified, and the gate stays on the page as written for anyone who reopens the question later.
+>
+> Retrieval in the Plan is exact lookup, lexical/BM25, and bounded typed graph traversal. ParadeDB is retained for everything else it was selected for — BM25 and Top K, highlighting, tokenizers and filters, filtering, columnar aggregates, buckets and metrics, facets, and search JOINs — and carries the lexical leg without an embedding of any kind. Every remaining row of the table keeps its gate exactly as written: LSP/SCIP/Prism enrichment, Personalized PageRank, reranking or distillation, additional critique agents, idle wake integration.
+>
+> The rest of this section — exact-vector baselines and candidate embedding models, the one-configuration versioning discipline, the float32 sizing calculation, vector/ANN publication and scope-filter behavior, and optional inference runtimes — describes a capability the Plan does not build. Read it as research record, not as outstanding work. Two things in it survive the removal and should not be discarded with it: the requirement to qualify version-dependent and beta features before release, which now applies to the ParadeDB search features actually relied on, and the closing point that collection-wide graph summaries belong to a separately justified architectural-analysis mode rather than to exact code lookup.
 
 `sqlite-vec` is a reasonable exact-vector baseline; USearch is a later ANN option.[^54] Model choice should follow repository-specific evaluation. Qwen3-Embedding-0.6B and EmbeddingGemma-300M are examples worth qualifying, not declared winners.[^55][^56] Version model revision, input formatting, tokenizer, pooling, dimensions, normalization, runtime, and quantization as one configuration.
 
@@ -659,6 +703,8 @@ Release gates require the mandatory fixture suite, qualified latency under decla
 
 ## 17. Implementation sequence and decision gates
 
+> **[Superseded → Plan §11]** The Plan's six phases and acceptance gates replace the table below and are the ones to work from. The sequencing *argument* survives intact and is worth re-reading before any resequencing is proposed: task contracts and outcome capture land early rather than waiting on a sophisticated graph; the full candidate/check loop follows reliable source retrieval; optional precision extensions come last, one at a time. The Phase 0 deliverables named here (Rust workspace, Cargo layout) are stack artifacts and do not carry over. In the Phase 6 row below, the **embedding provider and ANN entries are out of scope rather than gated** (see the §15 marker); the precise resolver, reranker and research adapter entries are the ones the Plan keeps as conditional follow-on. The closing paragraph on the first useful demonstration — one historical rejected fix, one current-source mismatch, one child-agent handoff, one candidate supported by new observations, and one case where the system correctly reports insufficient evidence — is **not** superseded and remains the clearest statement of what a first release must show.
+
 | Phase | Deliverable | Exit evidence |
 |---|---|---|
 | 0. Foundation and baseline | Rust workspace, host service, thin adapters, two Compose services, doctor/pairing, initial task fixtures | Durable event transport, qualified capabilities, measured bridge latency, UI outage independent of hooks |
@@ -671,7 +717,7 @@ Release gates require the mandatory fixture suite, qualified latency under decla
 
 Task contracts and outcome capture arrive early; they do not wait for a sophisticated graph. The full candidate/check loop follows reliable source retrieval. A small usable release should recover real work and reject misleading completion evidence before optional inference is introduced.
 
-The native `doctor` command checks Claude capabilities, SQLite runtime/features, Docker reachability, approved roots, volume ownership, supported artifact parsers, and attribution coverage. Keep a qualified compatibility bundle rather than assuming the latest client fields always match older installations.
+The native `doctor` command checks Claude capabilities, SQLite runtime/features, Docker reachability, approved roots, volume ownership, supported artifact parsers, and attribution coverage. **[Substitute: PostgreSQL/ParadeDB runtime and extension availability for "SQLite runtime/features"; the check list is otherwise unchanged and `contextctl doctor` remains a Ruby adapter command.]** Keep a qualified compatibility bundle rather than assuming the latest client fields always match older installations.
 
 The first useful demonstration should include one historical rejected fix, one current-source mismatch, one child-agent handoff, one candidate supported by new observations, and one case where the system correctly reports insufficient evidence. Success requires both finding a solution when the evidence permits it and avoiding a fabricated solution when it does not.
 
@@ -685,7 +731,7 @@ Local storage does not make Claude inference local: selected context can reach i
 
 Use short transactions and bounded queues, logs, exports, and graph views. Separate liveness from index completeness. The host service reconnects independently of the browser; foreground memory/task mutations remain higher priority than reconstructable indexing work.
 
-Back up the canonical ledger through a consistent SQLite snapshot mechanism.[^63] Pause object garbage collection, capture the ledger snapshot, copy objects reachable from it, and publish the backup manifest last. Derived indexes can be rebuilt. Migrations need a restorable prior snapshot and protection against incompatible concurrent writers.
+Back up the canonical ledger through a consistent SQLite snapshot mechanism.[^63] **[Superseded → Plan §9: PostgreSQL's own consistent-snapshot mechanism; the ordering below is unchanged.]** Pause object garbage collection, capture the ledger snapshot, copy objects reachable from it, and publish the backup manifest last. Derived indexes can be rebuilt. Migrations need a restorable prior snapshot and protection against incompatible concurrent writers.
 
 Retention policies preserve essential support for active memories and solution cases. If evidence expires, downgrade verifiability rather than silently preserving a current-looking assertion. Privacy deletion removes relevant content/projections and uses minimal tombstone/idempotency protection to prevent delayed jobs or retries from recreating it. Retraction and forgetting have different semantics.
 
@@ -706,6 +752,8 @@ The release is acceptable when a developer can resume a task, recover decisions 
 This provides an LLM with better continuity and a more disciplined interaction with evidence. It still depends on adequate requirements, useful checks, truthful observations, and competent interpretation. The architecture makes those dependencies inspectable and testable instead of hiding them behind a growing memory store.
 
 ## Appendix A. Canonical identity and memory schema excerpt
+
+> **[Dialect superseded → Plan §5.1–5.3; semantics retained]** Read this appendix as a specification of identity, constraints and lifecycle, then translate to PostgreSQL. The parts that must survive translation are the ones easiest to drop: the `CHECK` constraints tying `attribution_state` to `agent_key` nullability and `lineage_state` to `parent_agent_key`, the partial unique index `one_main_agent_per_session`, the deferred circular reference between `memories.current_revision` and `memory_revisions`, and the `(installation_id, producer_key, producer_epoch, producer_sequence)` deduplication key. PostgreSQL expresses all of these; none is decoration. Add `project_key` ownership throughout per Plan §1.1, which this appendix predates.
 
 This schema illustrates canonical identity and memory constraints; it is not the complete application migration set. Native IDs are scoped to their session, a main-agent key is locally assigned, and execution attempts are separate. Evidence refers to canonical objects/events rather than disposable code-index row IDs. The core additionally implements principal authentication, scope authorization, attribution history, memory links, jobs, retention, and audit receipts.
 
@@ -966,6 +1014,8 @@ Provider payloads are retained separately from this application envelope. Local 
 
 ## Appendix B. Hook and MCP configuration blueprint
 
+> **[Partly superseded → Plan §3, §3.1]** The event list, the `timeout` values and the one-dispatcher-per-event shape carry over unchanged. `bin/contextctl` and `bin/context-mcp` become Ruby adapter executables rather than compiled binaries — which makes the timeout budgets *tighter*, not looser, since interpreter startup now sits inside them. This is the concrete reason the Plan keeps Rails off the hook path and uses warm long-lived processes; a naive `ruby` invocation per hook would not fit. Requalify against the installed client before relying on any event's contract.
+
 These examples describe future native executables. The binaries, installer, compatibility checks, and full behavior still need implementation. Exec-form support and event contracts must pass the installed-client capability check. The one-second hook timeout is an outer guard; the CLI enforces the shorter operation deadline internally.
 
 ```json
@@ -998,6 +1048,8 @@ These examples describe future native executables. The binaries, installer, comp
 ```
 
 ## Appendix C. Rebuildable repository code schema excerpt
+
+> **[Dialect superseded → Plan §5.1, §5.4; semantics retained]** Translate to PostgreSQL, and note that "separate database" below becomes a **separate ownership boundary inside one PostgreSQL database** in the Plan, not a second server. That substitution is safe only if the boundary stays explicit: derived index tables must remain independently rebuildable and must never be written in the same transaction as canonical records. The generation/epoch columns (`source_epoch`, `index_generation`, `reconciling`) and the `parse_versions` uniqueness on `(content_hash, language, parser_revision, parse_context_key)` are what make stale-publication detection work; carry them over intact. The FTS5 virtual tables are replaced by ParadeDB indexes.
 
 Create this excerpt in a **separate repository index database**, not in the canonical ledger connection. Repository identity is supplied by the catalog and qualified index manifest. The schema separates raw content identity, context-dependent parse results, logical subjects, occurrences, active worktree mappings, and dependency-qualified edges.
 
@@ -1128,6 +1180,8 @@ Publication must check that `index_files.observed_content_hash` equals the parse
 Keep lexical rows aligned with active mappings in the same repository-index transaction. Immediately setting a path dirty suppresses its former current-code claims even before a parse completes. Coverage tracks unfinished files and resolver holes; advancing a maximum job number does not fill them.
 
 ## Appendix D. Task and verification schema excerpt
+
+> **[Dialect superseded → Plan §5.2, §7.3; semantics retained]** Translate to PostgreSQL. This appendix carries the completion logic that Plan invariant 7 depends on, so the constraints that prevent a task from completing on inapplicable evidence are the load-bearing part, not the column list.
 
 Apply this excerpt to the canonical connection after Appendix A. It illustrates versioned requirements, immutable candidate/check identities, observations, and evidence derivation. Source snapshot keys identify retained manifest objects; the core validates their contents and coverage. The application owns additional claim assessments, task events, dependency bindings, case projections, and completion-receipt records.
 

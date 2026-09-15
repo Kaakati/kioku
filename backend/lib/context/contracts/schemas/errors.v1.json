@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kioku.local/contracts/errors.v1.json",
+  "title": "kioku.tool.v1 error catalogue",
+  "description": "Frozen Phase 0 wire error names. Data file read through Context::Contracts::SchemaRegistry; Context::Errors mirrors it one class per entry. status=null means the failure is surfaced at the transport level with no response status field (Phase 0 open decision: a tenth status value may be added additively in v1.1).",
+  "type": "object",
+  "x-kioku": {
+    "catalogue": {
+      "kioku.partial_result": {
+        "status": "partial",
+        "retryable": false,
+        "raised_by_core": false,
+        "meaning": "Authorized, in-budget answer produced but a declared portion could not be served. Data present, coverage.state=partial, gaps enumerated. Applicability filtering triggers a bounded refill first; material contrary evidence is never the thing dropped to fit."
+      },
+      "kioku.queued": {
+        "status": "queued",
+        "retryable": true,
+        "raised_by_core": false,
+        "meaning": "Durable host enqueue only, saved:false. Produced by the host adapter when canonical commit is unavailable, never by the core. Replay after reconnect returns the same idempotency receipt."
+      },
+      "kioku.revision_conflict": {
+        "status": "conflict",
+        "retryable": false,
+        "raised_by_core": true,
+        "details": ["current_revision", "current_head", "target_key"],
+        "meaning": "expected_revision is stale or the target head moved. The stale writer fails; nothing is written."
+      },
+      "kioku.idempotency_conflict": {
+        "status": "conflict",
+        "retryable": false,
+        "raised_by_core": true,
+        "details": ["prior_receipt_id", "prior_request_digest", "supplied_request_digest"],
+        "meaning": "Same idempotency key arrived with a different request digest. Nothing is written."
+      },
+      "kioku.precondition_failed": {
+        "status": "conflict",
+        "retryable": false,
+        "raised_by_core": true,
+        "details": ["stale_heads", "receipt_state", "invalidating_changes"],
+        "meaning": "A close was attempted against a receipt that is no longer applicable, or heads moved. Returns the mismatch, never a partial close."
+      },
+      "kioku.authority_violation": {
+        "status": "conflict",
+        "retryable": false,
+        "raised_by_core": true,
+        "details": ["attempted", "required_authority", "actor_authority"],
+        "meaning": "An authority-changing edit was attempted without the backing authority. The objection or proposal is preserved where required; the authority transition is refused."
+      },
+      "kioku.evidence_required": {
+        "status": "conflict",
+        "retryable": false,
+        "raised_by_core": true,
+        "details": ["evidence_rejected"],
+        "meaning": "An explicit memory write supplied no eligible evidence link. Enforced before the memory-save transaction commits."
+      },
+      "kioku.continuation_expired": {
+        "status": "conflict",
+        "retryable": false,
+        "raised_by_core": true,
+        "details": ["reset_required_reason"],
+        "meaning": "A continuation cursor expired or its bound scope/query/generation digest no longer matches. The caller restarts the query."
+      },
+      "kioku.scope_denied": {
+        "status": "unauthorized_scope",
+        "retryable": false,
+        "raised_by_core": true,
+        "meaning": "The requested scope is not granted to the authenticated principal. Denial is uniform across fetch, caches, traversal, facets and aggregates and must not disclose whether the target exists in another scope."
+      },
+      "kioku.project_binding_unresolved": {
+        "status": "unauthorized_scope",
+        "retryable": false,
+        "raised_by_core": true,
+        "details": ["setup_required"],
+        "meaning": "The project binding is missing or ambiguous. The core never attaches another project's history and never reinterprets unresolved project capture as global."
+      },
+      "kioku.source_unavailable": {
+        "status": "unavailable_source",
+        "retryable": true,
+        "raised_by_core": true,
+        "meaning": "Returned only when the caller set require_source_validation and a selected dependency could not be checked before the deadline. By default the request succeeds with applicability=historical|unknown and a host_disconnected coverage gap."
+      },
+      "kioku.evidence_unavailable": {
+        "status": "evidence_unavailable",
+        "retryable": false,
+        "raised_by_core": true,
+        "details": ["reason", "deletion_epoch"],
+        "meaning": "The referenced revision, object or evidence handle was deleted, expired, purged or redacted. Deletion epochs prevent queued jobs and replays from resurrecting it."
+      },
+      "kioku.quota_exhausted": {
+        "status": "quota_exhausted",
+        "retryable": true,
+        "raised_by_core": true,
+        "details": ["quota_kind", "limit", "observed", "retry_after_ms"],
+        "meaning": "Installation or actor budget exceeded. Disk/spool exhaustion produces visible failure and loss accounting, never a false durable acknowledgment."
+      },
+      "kioku.deadline_exceeded": {
+        "status": "deadline_expired",
+        "retryable": true,
+        "raised_by_core": true,
+        "meaning": "For reads, nothing is returned rather than an unlabeled fragment. For writes the outcome is indeterminate by design: retry with the same idempotency key and request digest. A deadline expiry is never reported as a save."
+      },
+      "kioku.invalid_request": {
+        "status": null,
+        "retryable": false,
+        "raised_by_core": true,
+        "details": ["field", "reason"],
+        "meaning": "Failed schema, enum, bound or cardinality validation, or supplied a core-derived field such as authority or actor identity."
+      },
+      "kioku.handle_unresolved": {
+        "status": null,
+        "retryable": false,
+        "raised_by_core": true,
+        "meaning": "A handle did not resolve, whether because it does not exist or because it belongs to a scope the caller cannot see. Deliberately merged so the two are indistinguishable to the caller; the internal audit log distinguishes them."
+      },
+      "kioku.unsupported_operation": {
+        "status": null,
+        "retryable": false,
+        "raised_by_core": true,
+        "meaning": "Unknown op, unknown edge kind, mode=semantic or mode=hybrid (permanently unsupported, embeddings are out of scope), or hops > 2."
+      },
+      "kioku.unsupported_schema_version": {
+        "status": null,
+        "retryable": false,
+        "raised_by_core": true,
+        "meaning": "Unsupported schema_version major. Returned before any scope resolution, so no generation vector is available."
+      },
+      "kioku.internal_error": {
+        "status": null,
+        "retryable": false,
+        "raised_by_core": true,
+        "meaning": "Unexpected internal failure. No partial write is implied. Services do not swallow unexpected exceptions or turn failed saves into successful results. Message is content- and credential-redacted."
+      }
+    }
+  }
+}
