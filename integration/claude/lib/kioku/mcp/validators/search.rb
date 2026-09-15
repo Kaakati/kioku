@@ -1,50 +1,50 @@
 # frozen_string_literal: true
 
 require_relative "../rules"
-require_relative "../vocabulary"
-require_relative "../../envelope"
+require_relative "../tool_contract"
 
 module Kioku
   module Mcp
     module Validators
       # [contracts: tools context_search]. The three retrieval mechanisms are the whole
       # set; mode=semantic and mode=hybrid are permanently unsupported values rather than
-      # absent ones, so a caller that asks for them is told so by name instead of being
-      # told its request was malformed.
+      # absent ones, so a caller that asks for them is told the mechanism does not exist
+      # instead of being told to fix its spelling.
       class Search
-        PERMITTED = %w[envelope mode query keys seeds edge_kinds].freeze
+        CONTRACT = ToolContract.new("context_search")
+
+        # Recorded in the artifact so a conformance test can assert neither value is
+        # accepted anywhere; referenced by no tool, which is why it is read from the
+        # shared definitions rather than from this tool's own enum.
+        REMOVED_MODES = Kioku::Contracts.definition("removed_retrieval_modes").fetch("enum").freeze
 
         def call(arguments:)
-          Rules.only(arguments, PERMITTED)
-          mode = retrieval_mode(arguments)
-          envelope = Kioku::Envelope.parse_request(arguments["envelope"])
-          validate_inputs(mode, arguments)
-          envelope
+          CONTRACT.call(arguments: arguments, mutation: false) do
+            refuse_removed_mode(arguments)
+            refuse_unvalidated_edge_kinds(arguments)
+            refuse_deep_expansion(arguments)
+          end
         end
 
         private
 
-        def retrieval_mode(arguments)
-          declared = arguments["mode"]
-          if Vocabulary::REMOVED_RETRIEVAL_MODES.include?(declared)
-            Rules.unsupported!("embedding-based retrieval is out of scope for this contract",
-                               "mode" => declared)
-          end
+        def refuse_removed_mode(arguments)
+          return unless REMOVED_MODES.include?(arguments["mode"])
 
-          Rules.enum(arguments, "mode", Vocabulary::RETRIEVAL_MODES)
+          Rules.unsupported!("embedding-based retrieval is out of scope for this contract",
+                             "fields" => ["mode"])
         end
 
-        def validate_inputs(mode, arguments)
-          case mode
-          when "exact" then Rules.typed_handles(arguments, "keys", min: 1, max: 50)
-          when "lexical" then Rules.text(arguments, "query", max: 1024)
-          when "related" then validate_traversal(arguments)
-          end
+        def refuse_unvalidated_edge_kinds(arguments)
+          allowed = CONTRACT.declares("properties", "edge_kinds", "items", "enum")
+          Rules.unvalidated_edge_kinds!(arguments["edge_kinds"], allowed, "edge_kinds")
+          Rules.unvalidated_edge_kinds!(Rules.at(arguments, "expand", "edge_kinds"), allowed,
+                                        "expand.edge_kinds")
         end
 
-        def validate_traversal(arguments)
-          Rules.typed_handles(arguments, "seeds", min: 1, max: 10)
-          Rules.edge_kinds(arguments, "edge_kinds", Vocabulary::EDGE_KINDS)
+        def refuse_deep_expansion(arguments)
+          ceiling = CONTRACT.declares("properties", "expand", "properties", "hops", "maximum")
+          Rules.hops_above_ceiling!(Rules.at(arguments, "expand", "hops"), ceiling, "expand.hops")
         end
       end
     end

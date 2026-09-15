@@ -19,8 +19,17 @@ module Kioku
         PRODUCER_FILE = "producer.json"
         ENTRIES_DIR = "entries"
         RECEIPTS_DIR = "receipts"
+        TEMP_SUFFIX = ".tmp"
 
-        attr_reader :producer_key, :producer_epoch
+        # Every field an entry needs to be replayable. A file missing one of them
+        # did not survive the write that produced it.
+        ENTRY_FIELDS = %w[spool_entry_id producer_key producer_epoch producer_sequence
+                          idempotency_key request_digest byte_length envelope].freeze
+
+        # A capture the spool acknowledged as queued whose file did not reopen.
+        Loss = Struct.new(:spool_entry_id, :reason, keyword_init: true)
+
+        attr_reader :producer_key, :producer_epoch, :losses
 
         def initialize(dir:)
           @dir = dir
@@ -32,6 +41,10 @@ module Kioku
 
         def entries
           @entries.values
+        end
+
+        def pending?(spool_entry_id)
+          @entries.key?(spool_entry_id)
         end
 
         def pending_bytes
@@ -82,10 +95,29 @@ module Kioku
                      "producer_key" => @producer_key, "epoch" => @producer_epoch, "sequence" => @sequence)
         end
 
+        # An entry file that will not reopen is a capture a caller was already told
+        # was queued, so it is accounted rather than filtered away: "Disk/spool
+        # exhaustion produces visible failure and loss accounting; it never produces
+        # a false durable acknowledgment" [contracts: errors kioku.quota_exhausted;
+        # plan §9]. The file carries its entry id in its name, which is how a
+        # capture whose bytes are unreadable can still be named in the accounting.
         def load_entries
-          records = Dir[File.join(entries_dir, "*.json")].filter_map { |path| read_json(path) }
+          @losses = []
+          records = Dir[File.join(entries_dir, "*.json")].filter_map { |path| entry_or_loss(path) }
           records.sort_by { |record| [record.fetch("producer_epoch"), record.fetch("producer_sequence")] }
                  .each_with_object({}) { |record, index| index[record.fetch("spool_entry_id")] = record }
+        end
+
+        def entry_or_loss(path)
+          record = read_json(path)
+          return record if complete_entry?(record)
+
+          @losses << Loss.new(spool_entry_id: File.basename(path, ".json"), reason: "unreadable_entry")
+          nil
+        end
+
+        def complete_entry?(record)
+          record.is_a?(Hash) && ENTRY_FIELDS.all? { |field| record.key?(field) }
         end
 
         def load_receipts
@@ -120,13 +152,29 @@ module Kioku
         end
 
         # Durable means it survives the producer process, so the bytes are flushed to the
-        # device before the caller is told the entry is queued.
+        # device before the caller is told the entry is queued. Writing in place would
+        # make an interruption leave a truncated file under the entry's own name: the
+        # bytes land in a temporary file, reach the device, and only then take that
+        # name, so the entry either has all of its bytes or does not exist. The
+        # directory is flushed afterwards, because the rename is itself a directory
+        # change that has to reach the device.
         def write_json(path, record)
-          File.open(path, "wb") do |file|
+          temporary = "#{path}#{TEMP_SUFFIX}"
+          File.open(temporary, "wb") do |file|
             file.write(JSON.generate(record))
             file.flush
             file.fsync
           end
+          File.rename(temporary, path)
+          fsync_directory(File.dirname(path))
+        end
+
+        # Ruby defines Dir#fsync only where the platform can flush a directory handle;
+        # Windows cannot, and the deployment targets (Linux/WSL, macOS) can.
+        def fsync_directory(dir)
+          Dir.open(dir) { |handle| handle.fsync if handle.respond_to?(:fsync) }
+        rescue SystemCallError, NotImplementedError
+          nil
         end
       end
     end

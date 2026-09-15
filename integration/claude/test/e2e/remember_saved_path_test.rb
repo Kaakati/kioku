@@ -94,6 +94,16 @@ class KiokuRememberSavedPathTest < Minitest::Test
 
   private
 
+  # HARNESS REPAIR (green phase): the four cases above pass `detail(envelope)` as
+  # the assertion message and nothing defined it, so every case raised NoMethodError
+  # before its assertion ran. Minitest evaluates a message argument eagerly, so this
+  # was fatal whether the assertion held or not. It was invisible during the red
+  # phase because `setup` flunked first on the missing bin/context-agent. No
+  # assertion is touched: this only renders the envelope the assertion is about.
+  def detail(envelope)
+    "HTTP-less relay of #{JSON.generate(envelope)[0, 600]}"
+  end
+
   def core_url
     Kioku::TestSupport::CoreStack.core_url
   end

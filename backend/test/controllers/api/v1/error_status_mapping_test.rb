@@ -93,12 +93,40 @@ class ApiErrorStatusMappingTest < ActionDispatch::IntegrationTest
     assert_equal "kioku.partial_result", payload.dig("error", "code")
   end
 
-  test "should answer 202 and never render a durable enqueue as saved" do
+  # Q2. This asserted `refute payload.dig("data", "saved")` against `probe_raising`,
+  # which raises before render_envelope — so `data` was always nil (line 41 of this
+  # same file asserts exactly that for that probe) and the most important invariant
+  # in the system was being asserted against nothing. It passed for every possible
+  # implementation, including one that rendered saved: true.
+  #
+  # The probe now renders a real queued envelope carrying a durability label, so the
+  # assertion has something it could be wrong about. Mutation check: make the
+  # serializer promote `saved` or drop the key and this goes red.
+  test "should answer 202 and name the queued status when a write is durably enqueued" do
     payload = probe_raising("kioku.queued")
 
     assert_equal 202, response.status
     assert_equal "queued", payload["status"]
-    refute payload.dig("data", "saved"), "a queued write was rendered as saved"
+  end
+
+  # Q2. The durability assertion used to live in the test above, as
+  # `refute payload.dig("data", "saved")` against `probe_raising` — which raises
+  # before render_envelope, so `data` was always nil (line 41 asserts exactly that
+  # for that probe). The most important invariant in the system was asserted against
+  # nothing and passed for every possible implementation, including one that
+  # rendered saved: true.
+  #
+  # Rendering a real queued envelope gives it something it could be wrong about.
+  # Mutation check: make the serializer promote `saved` or drop the key, and this
+  # goes red.
+  test "should never render a durable enqueue as saved" do
+    spool = { "spool_entry_id" => "spool-1-1-probe", "producer_sequence" => 1 }
+    payload = post_probe("envelope" => wire_envelope, "render_status" => "queued",
+                         "render_data" => { "saved" => false, "spool" => spool })
+
+    refute_nil payload["data"], "the probe rendered no data, so the next assertion proves nothing"
+    assert_equal false, payload.dig("data", "saved"), "a queued write was rendered as saved"
+    assert_equal "spool-1-1-probe", payload.dig("data", "spool", "spool_entry_id")
   end
 
   test "should answer 500 with a redacted message when an unexpected failure escapes" do

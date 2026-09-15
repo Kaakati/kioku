@@ -18,15 +18,16 @@ class ContextctlHookDegradationTest < Minitest::Test
   # Appendix B's outer guard is one second; "well inside" leaves room for host jitter.
   HOOK_BUDGET_SECONDS = 0.9
 
-  def hook(event_name, timeout: 5.0)
+  def hook(event_name, timeout: 5.0, socket_path: nil)
     payload = {
       "hook_event_name" => event_name,
       "session_id" => "session-abc",
       "cwd" => Dir.pwd,
       "prompt" => "what did we decide about the spool?"
     }
-    Kioku::TestSupport::HostCommand.run("contextctl", "hook",
-                                        stdin_data: JSON.generate(payload), timeout: timeout)
+    env = socket_path ? { "KIOKU_SOCKET_PATH" => socket_path } : {}
+    Kioku::TestSupport::HostCommand.run("contextctl", "hook", env: env,
+                                                              stdin_data: JSON.generate(payload), timeout: timeout)
   end
 
   def test_should_exit_cleanly_when_no_agent_socket_is_present
@@ -52,14 +53,41 @@ class ContextctlHookDegradationTest < Minitest::Test
                "the hook injected context it could not have retrieved"
   end
 
-  # "never a false durable acknowledgment" [plan §9]; "queued means durable host enqueue"
-  # [plan invariant 2]. With no agent there is no spool, so neither label is available.
-  def test_should_not_claim_the_capture_was_saved_when_no_agent_socket_is_present
-    output = hook("UserPromptSubmit").stdout
+  # Q3. This used to run against a hook with NO agent socket, whose stdout is empty
+  # by construction — so both refute_match calls matched against "" and passed for
+  # every conceivable implementation, including one that rendered "saved": true.
+  #
+  # "never a false durable acknowledgment" [plan §9]; "queued means durable host
+  # enqueue" [plan invariant 2]. The scenario the invariant is about is an agent
+  # that ANSWERED: it reported a durable enqueue, and the hook must not promote
+  # that into a save. The stub answers a real queued frame, and the requests
+  # assertion means a hook that never made contact cannot pass by staying silent.
+  def test_should_not_promote_a_queued_agent_answer_into_a_save
+    reply = {
+      "schema_version" => "kioku.tool.v1", "status" => "queued",
+      "error" => { "code" => "kioku.queued", "message" => "durably enqueued, not committed" },
+      "data" => { "saved" => false, "spool" => { "spool_entry_id" => "spool-1-1-stub" } }
+    }
 
-    refute_match(/"saved"\s*:\s*true/, output, "the hook reported a save with no agent running")
-    refute_match(/"(capture_status|status)"\s*:\s*"(saved|queued)"/, output,
-                 "the hook reported durable capture with no agent running")
+    result = Kioku::TestSupport::StubAgentSocket.serving(reply) do |stub|
+      answer = hook("UserPromptSubmit", socket_path: stub.path)
+      refute_empty stub.requests, "the hook never contacted the agent, so this proves nothing"
+      answer
+    end
+
+    refute_match(/"saved"\s*:\s*true/, result.stdout,
+                 "the hook reported a save from an answer that said queued")
+    refute_match(/"(capture_status|status)"\s*:\s*"saved"/, result.stdout,
+                 "the hook labelled a durable enqueue as a canonical commit")
+  end
+
+  # The absent-agent companion, stated as what it actually checks: the hook exits
+  # without enhancement rather than inventing one. It makes no durability claim
+  # because it makes no claim at all.
+  def test_should_return_no_enhancement_when_no_agent_socket_is_present
+    output = hook("UserPromptSubmit").stdout.strip
+
+    assert_empty output, "the hook emitted output it could not have obtained"
   end
 
   def test_should_exit_cleanly_for_every_supported_event_when_no_agent_socket_is_present

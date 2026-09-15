@@ -1,18 +1,19 @@
 # frozen_string_literal: true
 
 module Context
-  # The frozen Phase 0 wire error catalogue (contracts.json `errors`).
+  # The frozen kioku.tool.v1 wire error catalogue, read from the shared artifact.
   #
-  # Each class binds three things the boundary needs and nothing else: the wire
-  # `code` a caller branches on, the nine-way response `status` of plan 6.1, and
-  # the HTTP status the code maps to. The status/HTTP table is the interpretation
-  # recorded with these tests; the wire codes are frozen and are not.
+  # `contracts/v1/errors.json` is the one table of wire names, the response status each
+  # resolves to, whether a caller may retry, and the HTTP status the Rails surface
+  # answers with. This module used to hold a hand transcription of it and the host held
+  # another, which nothing could diff: the two disagreed on kioku.queued.retryable (D5),
+  # and both left kioku.invalid_request, handle_unresolved, unsupported_operation,
+  # unsupported_schema_version and internal_error with NO status at all (D1) — so a core
+  # 500 and a malformed request were indistinguishable on the single discriminator, and a
+  # model asking for a handle that does not exist was told its request was malformed.
   #
-  # `status` is deliberately absent on the request-validation codes. The frozen
-  # contract says of kioku.invalid_request: "for v1 this returns HTTP/MCP-level
-  # error with code kioku.invalid_request and no status field", and names no
-  # status for kioku.handle_unresolved or kioku.internal_error either. A response
-  # for those omits the field rather than inventing a tenth enum value.
+  # The classes stay, because the code raises them by name and rescues them by ancestry.
+  # What they no longer carry is an opinion: `wire code:` looks the rest up.
   module Errors
     REGISTRY = {}
 
@@ -20,11 +21,15 @@ module Context
       class << self
         attr_reader :wire_code, :wire_status, :http_status
 
-        def wire(code:, http:, status: nil, retryable: false)
+        # The status stays a Symbol because the core speaks its own enums in
+        # symbols and renders them on the wire once, in Serialization::Wire. The
+        # artifact decides WHICH status; the spelling is the core's own.
+        def wire(code:)
+          entry = Contracts.errors.fetch(code)
           @wire_code = code
-          @http_status = http
-          @wire_status = status
-          @retryable = retryable
+          @wire_status = entry.fetch("status").to_sym
+          @http_status = entry.fetch("http_status")
+          @retryable = entry.fetch("retryable")
           Errors.register(self)
         end
 
@@ -35,10 +40,10 @@ module Context
 
       attr_reader :details, :retry_after_ms, :http_status
 
-      # `http_status` overrides the class default for the one case the contract
-      # does not cover: an unrecognised bridge credential is denied with the
-      # frozen kioku.scope_denied code but answered 401, because the credential
-      # rather than the requested scope is what failed.
+      # `http_status` overrides the class default for the one case the artifact records
+      # as an override: an unrecognised bridge credential is denied with the frozen
+      # kioku.scope_denied code but answered 401, because the credential rather than the
+      # requested scope is what failed [contracts: errors.json kioku.scope_denied].
       def initialize(message = nil, details: {}, retry_after_ms: nil, http_status: nil)
         @details = details || {}
         @retry_after_ms = retry_after_ms
@@ -87,99 +92,100 @@ module Context
     # --- not failures -------------------------------------------------------
 
     class PartialResult < Error
-      wire code: "kioku.partial_result", http: :ok, status: :partial
+      wire code: "kioku.partial_result"
     end
 
+    # "Replay after reconnect returns the same idempotency receipt", so re-issuing with
+    # the same key and digest is how a caller learns the commit outcome — which is what
+    # retryable means. The artifact settles it; this class no longer votes (D5).
     class Queued < Error
-      wire code: "kioku.queued", http: :accepted, status: :queued
+      wire code: "kioku.queued"
     end
 
     # --- conflicts ----------------------------------------------------------
 
     class RevisionConflict < Error
-      wire code: "kioku.revision_conflict", http: :conflict, status: :conflict
+      wire code: "kioku.revision_conflict"
     end
 
     class IdempotencyConflict < Error
-      wire code: "kioku.idempotency_conflict", http: :conflict, status: :conflict
+      wire code: "kioku.idempotency_conflict"
     end
 
     class AuthorityViolation < Error
-      wire code: "kioku.authority_violation", http: :conflict, status: :conflict
+      wire code: "kioku.authority_violation"
     end
 
     class EvidenceRequired < Error
-      wire code: "kioku.evidence_required", http: :conflict, status: :conflict
+      wire code: "kioku.evidence_required"
     end
 
     class ContinuationExpired < Error
-      wire code: "kioku.continuation_expired", http: :conflict, status: :conflict
+      wire code: "kioku.continuation_expired"
     end
 
     class PreconditionFailed < Error
-      wire code: "kioku.precondition_failed", http: :precondition_failed, status: :conflict
+      wire code: "kioku.precondition_failed"
     end
 
     # --- scope --------------------------------------------------------------
 
     class ScopeDenied < Error
-      wire code: "kioku.scope_denied", http: :forbidden, status: :unauthorized_scope
+      wire code: "kioku.scope_denied"
     end
 
     class ProjectBindingUnresolved < Error
-      wire code: "kioku.project_binding_unresolved", http: :forbidden, status: :unauthorized_scope
+      wire code: "kioku.project_binding_unresolved"
     end
 
     # --- availability and budget --------------------------------------------
 
     class SourceUnavailable < Error
-      wire code: "kioku.source_unavailable", http: :service_unavailable,
-           status: :unavailable_source, retryable: true
+      wire code: "kioku.source_unavailable"
     end
 
     class EvidenceUnavailable < Error
-      wire code: "kioku.evidence_unavailable", http: :gone, status: :evidence_unavailable
+      wire code: "kioku.evidence_unavailable"
     end
 
     class QuotaExhausted < Error
-      wire code: "kioku.quota_exhausted", http: :too_many_requests,
-           status: :quota_exhausted, retryable: true
+      wire code: "kioku.quota_exhausted"
     end
 
-    # The contract states the caller retries a deadline expiry with the same
-    # idempotency key and request digest, so this one is retryable by design.
     class DeadlineExceeded < Error
-      wire code: "kioku.deadline_exceeded", http: :gateway_timeout,
-           status: :deadline_expired, retryable: true
+      wire code: "kioku.deadline_exceeded"
     end
 
     # --- request validation -------------------------------------------------
 
-    # Not-found and wrong-scope are deliberately merged so the two are
-    # indistinguishable to the caller (plan 5.3).
+    # Not-found and wrong-scope are deliberately merged so the two are indistinguishable
+    # to the caller (plan 5.3). The status is unauthorized_scope because the caller's
+    # branch is the same in both cases — this is not obtainable — and both merged
+    # branches already answer 404, so nothing is disclosed on that channel either.
     class HandleUnresolved < Error
-      wire code: "kioku.handle_unresolved", http: :not_found
+      wire code: "kioku.handle_unresolved"
     end
 
     class InvalidRequest < Error
-      wire code: "kioku.invalid_request", http: :bad_request
+      wire code: "kioku.invalid_request"
     end
 
     class UnsupportedSchemaVersion < Error
-      wire code: "kioku.unsupported_schema_version", http: :bad_request
+      wire code: "kioku.unsupported_schema_version"
     end
 
     class UnsupportedOperation < Error
-      wire code: "kioku.unsupported_operation", http: :bad_request
+      wire code: "kioku.unsupported_operation"
     end
 
-    # The contract requires this message to be content- and credential-redacted.
-    # The raised text is kept on the exception for the server log and is never
-    # rendered on the wire.
+    # The contract requires this message to be content- and credential-redacted. The
+    # raised text is kept on the exception for the server log and is never rendered on
+    # the wire. `internal_error` is a status of its own because mapping a core fault onto
+    # any caller-fault value reports a 500 as a client error.
     class InternalError < Error
       REDACTED_MESSAGE = "an unexpected internal failure occurred"
 
-      wire code: "kioku.internal_error", http: :internal_server_error
+      wire code: "kioku.internal_error"
 
       def wire_message
         REDACTED_MESSAGE

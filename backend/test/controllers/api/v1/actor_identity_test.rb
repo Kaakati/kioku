@@ -20,7 +20,13 @@ class ApiActorIdentityTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_equal Kioku::Test::ApiProbe::BRIDGE_PRINCIPAL_ID, payload.dig("data", "actor", "principal_id")
-    assert_equal "transport", payload.dig("data", "actor", "identity_source")
+    # E4/O1. This asserted "transport" until the identity_source vocabulary was
+    # enforced. No such value exists: agents_identity_source_vocabulary and
+    # events_identity_source_vocabulary both admit only
+    # hook|telemetry|transcript|bridge|unresolved, so a row carrying "transport"
+    # could never be written. The test pinned a value the database rejects, and
+    # "bridge" is what a bridge-authenticated actor actually is.
+    assert_equal "bridge", payload.dig("data", "actor", "identity_source")
   end
 
   test "should reject a request whose body supplies an actor principal" do

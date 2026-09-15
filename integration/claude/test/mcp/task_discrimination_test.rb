@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require_relative "../test_helper"
+require_relative "../kioku/contract_signing"
+require_relative "../kioku/published_surface"
 
 # "a discriminated eight-operation schema that is not an arbitrary command or SQL
 # interface" [contracts: tools context_task.purpose; task_operations[]].
@@ -8,11 +10,27 @@ require_relative "../test_helper"
 # operation is not valid for another and a free-form payload is not valid for any.
 class McpTaskDiscriminationTest < Minitest::Test
   include Kioku::TestSupport::McpCase
+  include Kioku::TestSupport::PublishedSurface
+  include Kioku::TestSupport::ContractSigning
 
   EIGHT_OPS = %w[get set_contract record_claim propose plan_check assess checkpoint close].freeze
 
+  # Every mutation below is signed the way a real caller signs it. Once the boundary
+  # recomputes the request digest (E1), an unsigned mutation is refused for its digest
+  # whatever else the case names, and each of these cases — all of which expect
+  # kioku.invalid_request — would keep passing while measuring the digest instead of
+  # the missing subject, the invented enum value or the blank summary it describes.
+  def call_tool(name, arguments)
+    super(name, signed(arguments))
+  end
+
+  # Read through the branches, so what is measured is the eight operations rather than
+  # one schema's way of spelling them: the artifact discriminates context_task as a
+  # oneOf whose branches each pin `op` with a const, and a case reading
+  # `properties.op.enum` would compare nil to this list and fail while appearing to
+  # count operations.
   def test_should_offer_exactly_the_eight_operations_when_the_task_schema_is_published
-    assert_equal EIGHT_OPS, properties_of("context_task").dig("op", "enum")
+    assert_equal EIGHT_OPS.sort, values_offered_for("context_task", "op").sort
   end
 
   # "Covers unknown context_task op" [contracts: errors kioku.unsupported_operation].

@@ -9,10 +9,15 @@ module Context
     # This is a value type only. Decoding a wire payload into it — and refusing
     # the payloads the contract refuses — is EnvelopeDecoder's job.
     class Envelope
-      SCHEMA_VERSION = "kioku.tool.v1"
-      DEADLINE_MS_RANGE = (1..30_000).freeze
-      REQUEST_DIGEST = /\Asha256:[0-9a-f]{64}\z/
-      MAX_IDEMPOTENCY_KEY_BYTES = 128
+      # The version this core IMPLEMENTS. A response carries it, never an echo of the
+      # caller's declared minor: the core does not claim to implement a minor it does not
+      # [contracts: contract.json minor_policy.response_version].
+      #
+      # The deadline range, the digest pattern and the idempotency-key bound used to be
+      # restated here and checked by hand. They are declared in the artifact's envelope
+      # schema and enforced by the structural pass, so a copy of them in Ruby would only
+      # ever be a second opinion.
+      SCHEMA_VERSION = Contracts.contract.fetch("implemented_version")
 
       attr_reader :schema_version, :request_id, :deadline_ms, :scope,
                   :idempotency_key, :request_digest, :expected_revision

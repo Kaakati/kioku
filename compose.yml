@@ -28,7 +28,29 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-kioku}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — copy .env.example to .env and set it}
-      POSTGRES_DB: ${POSTGRES_DB:-kioku_development}
+      # LITERALLY `postgres`, and NOT the application database. This is the one
+      # line that decides whether the stack cold-boots.
+      #
+      # The image creates whatever POSTGRES_DB names, from ITS OWN template1, in
+      # docker_setup_db — before /docker-entrypoint-initdb.d runs. ParadeDB's
+      # 10_bootstrap_paradedb.sh then loads NINE extensions and a `paradedb`
+      # search_path into template1, paradedb and $POSTGRES_DB. So naming the
+      # application database here hands Rails a database that already carries
+      # postgis, pg_ivm, fuzzystrmatch and the rest, and whose `paradedb` schema
+      # already exists — at which point db/structure.sql's `CREATE SCHEMA
+      # paradedb` fails, `rails db:prepare` exits 1, `migrate` fails, and `api`
+      # never starts because it is gated on service_completed_successfully.
+      #
+      # `postgres` is the maintenance database initdb has already created, so
+      # docker_setup_db finds it and creates nothing. The application database
+      # does not exist when `migrate` runs, so db:prepare takes its db:create
+      # branch and config/database.yml's `template: template0` finally governs
+      # the database it was written for: plpgsql only, with `vector` and
+      # `pg_search` enabled by the first migration and nothing else.
+      #
+      # POSTGRES_DB in .env still names the APPLICATION database; it reaches the
+      # backend through DATABASE_URL below, which is the only place it belongs.
+      POSTGRES_DB: postgres
     volumes:
       # CRITICAL: this image's PGDATA is /var/lib/postgresql/18/docker, NOT
       # /var/lib/postgresql/data. Mounting the wrong path makes PostgreSQL
@@ -141,6 +163,14 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required — copy .env.example to .env and set it}@redis:6379/0}
       # Shared secret for the host agent -> api loopback bridge (plan §3).
       KIOKU_BRIDGE_TOKEN: ${KIOKU_BRIDGE_TOKEN:?KIOKU_BRIDGE_TOKEN is required — copy .env.example to .env and set it}
+      # What that credential is PAIRED TO (plan §6.3 "Pair bridge credentials to
+      # an installation and approved roots"). The core derives actor identity
+      # from the authenticated transport and never from request text, so the
+      # installation the write is attributed to and the origin role its authority
+      # is derived from are configuration of the credential, declared here,
+      # rather than fields a caller can send.
+      KIOKU_BRIDGE_INSTALLATION_KEY: ${KIOKU_BRIDGE_INSTALLATION_KEY:-kioku-local}
+      KIOKU_BRIDGE_ORIGIN_ROLE: ${KIOKU_BRIDGE_ORIGIN_ROLE:-user}
       KIOKU_OBJECT_ROOT: ${KIOKU_OBJECT_ROOT:-/var/lib/kioku/objects}
     ports:
       # Loopback only. Binding 0.0.0.0 here would expose the bridge to the LAN.

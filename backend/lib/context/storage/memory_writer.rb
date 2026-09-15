@@ -45,18 +45,32 @@ module Context
       end
 
       def write_receipt(request:, memory:)
+        actor = request.actor
         IdempotencyReceipt.create!(
           receipt_id: "receipt-#{SecureRandom.uuid_v7}",
           idempotency_key: request.envelope.idempotency_key,
-          request_digest: request.envelope.request_digest,
+          installation_key: actor.installation_key,
+          actor_principal_id: actor.principal_id,
+          # E1. The digest the core COMPUTED over the received content, never the value
+          # the caller asserted. The replay comparison reads this column, so storing the
+          # assertion would leave a caller deciding its own durability claim.
+          request_digest: request.computed_digest,
           memory_key: memory.memory_key,
           revision: memory.current_revision,
           committed_at: Time.current
         )
       end
 
-      def receipt_for(idempotency_key)
-        IdempotencyReceipt.find_by(idempotency_key: idempotency_key)
+      # The frozen contract scopes an idempotency key to its actor, so the lookup
+      # is scoped too. By key alone this hands one writer another writer's
+      # receipt: a save that caller never made, or a conflict quoting a receipt
+      # id and request digest from a scope it cannot see.
+      def receipt_for(actor:, idempotency_key:)
+        IdempotencyReceipt.find_by(
+          installation_key: actor.installation_key,
+          actor_principal_id: actor.principal_id,
+          idempotency_key: idempotency_key
+        )
       end
 
       def head_revision_of(memory_key)
@@ -90,10 +104,17 @@ module Context
           producer_epoch: request.envelope.request_id,
           producer_sequence: 0,
           agent_key: actor.agent_key,
-          # Appendix A ties attribution_state to agent_key nullability. A
-          # bridge-authenticated write carries no agent correlation, so the event
-          # records no agent join rather than claiming one (invariant 9).
-          attribution_state: actor.agent_key ? "resolved" : "not_applicable",
+          # The actor's own claim, never one derived from agent_key nullability.
+          # "There is no agent to join to" (not_applicable) is a stronger
+          # statement than "the join was not established" (unresolved), and only
+          # the actor knows which is true; asserting the stronger one from an
+          # absent column is invariant 9's false independent confirmation
+          # (research §8: attribution "can remain null until resolved").
+          attribution_state: actor.attribution_state.to_s,
+          # How identity was established is a recorded fact, in the one
+          # vocabulary agents.identity_source declares (frozen contract,
+          # transport_and_actor).
+          identity_source: actor.identity_source.to_s,
           event_type: CAPTURE_EVENT_TYPE,
           origin_role: actor.origin_role.to_s,
           observed_at: Time.current,
@@ -136,11 +157,15 @@ module Context
       # The derived lexical projection is published in the same transaction as
       # the canonical change it projects (plan 5.4), and there is one current
       # document per memory, so an append replaces it rather than adding one.
+      #
+      # The lifecycle travels with it: the retrieval gate runs on this table, so
+      # a projection that does not carry the revision's lifecycle leaves a
+      # retracted or superseded head fully retrievable by BM25.
       def publish_search_document(request, memory)
         document = MemorySearchDocument.find_or_initialize_by(memory_key: memory.memory_key)
         document.update!(revision: memory.current_revision, store_kind: memory.store_kind,
                          project_key: memory.project_key, title: request.title,
-                         body: request.body)
+                         body: request.body, lifecycle: request.effective_lifecycle.to_s)
       end
 
       # A project scope must already exist: registration is an operator/UI setup

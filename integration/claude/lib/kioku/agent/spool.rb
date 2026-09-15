@@ -41,7 +41,7 @@ module Kioku
 
       def enqueue(envelope:, idempotency_key:, request_digest:)
         prior = @store.receipt_for(idempotency_key)
-        return replay(prior, request_digest) unless prior.nil?
+        return replay(prior, request_digest) if replayable?(prior)
 
         record = build_entry(envelope, idempotency_key, request_digest)
         enforce_bound(record.fetch("byte_length"))
@@ -69,6 +69,13 @@ module Kioku
 
       def pending_count
         @store.entries.size
+      end
+
+      # Entries the spool acknowledged as queued that did not reopen. Every capture
+      # the caller was told was durable is either here or in `pending`; none is
+      # dropped [contracts: errors kioku.quota_exhausted; plan §9].
+      def losses
+        @store.losses
       end
 
       def receipt_for(idempotency_key:)
@@ -108,6 +115,19 @@ module Kioku
                     producer_epoch: record.fetch("producer_epoch"),
                     producer_sequence: record.fetch("producer_sequence"),
                     canonical_receipt: canonical_receipt, replayed: replayed)
+      end
+
+      # A receipt whose canonical receipt has arrived answers a replay from the
+      # canonical commit, so its capture is rightly gone. A receipt that has NOT
+      # been canonically acknowledged answers only for a capture still on disk:
+      # once the entry is lost, replaying from that receipt would report a capture
+      # that no longer exists as durably enqueued, which is the one thing a
+      # durability claim may never do. The capture is accepted again instead.
+      def replayable?(prior)
+        return false if prior.nil?
+        return true unless prior["canonical_receipt"].nil?
+
+        @store.pending?(prior.fetch("spool_entry_id"))
       end
 
       # "Repeating the same idempotency key and payload returns the prior receipt; a

@@ -28,6 +28,16 @@ module Kioku
           code = params[:raise_code]
           raise Context::Errors.fetch(code).new(params[:raise_message].presence) if code.present?
 
+          # A probe that only ever raises renders no `data`, so any assertion about
+          # the body of a non-success response runs against nil and cannot fail.
+          # This path renders a real envelope at a caller-chosen status so those
+          # assertions have something to be wrong about.
+          if params[:render_status].present?
+            return render_envelope(status: params[:render_status].to_sym,
+                                   data: params[:render_data]&.to_unsafe_h,
+                                   error: params[:render_error]&.to_unsafe_h)
+          end
+
           render_envelope(
             status: :success,
             data: {

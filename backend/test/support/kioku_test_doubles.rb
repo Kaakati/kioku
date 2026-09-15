@@ -73,11 +73,15 @@ module Kioku
         @fail_with = fail_with
       end
 
-      def record(event_type:, payload:, project_key: nil)
+      # `work_key` mirrors the real writer's signature (plan 5.1's stable work
+      # key). A double that accepts a narrower call than its subject cannot
+      # detect a caller that stopped supplying one.
+      def record(event_type:, payload:, work_key:, project_key: nil)
         raise @fail_with if @fail_with
 
         id = "outbox-event-#{@events.size + 1}"
-        @events << { outbox_event_id: id, event_type: event_type, payload: payload, project_key: project_key }
+        @events << { outbox_event_id: id, event_type: event_type, payload: payload,
+                     work_key: work_key, project_key: project_key }
         id
       end
 

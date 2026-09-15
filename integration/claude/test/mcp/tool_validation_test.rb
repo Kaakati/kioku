@@ -1,12 +1,23 @@
 # frozen_string_literal: true
 
 require_relative "../test_helper"
+require_relative "../kioku/contract_signing"
 
 # Argument validation happens at the MCP adapter, before any core round-trip, so a
 # malformed call is refused by its frozen wire name whether or not the core is running
 # [plan §4.1 "Use explicit conflict/validation errors mapped at the HTTP/MCP boundary"].
 class McpToolValidationTest < Minitest::Test
   include Kioku::TestSupport::McpCase
+  include Kioku::TestSupport::ContractSigning
+
+  # Every mutation below is signed the way a real caller signs it. Once the boundary
+  # recomputes the request digest (E1), an unsigned mutation is refused for its digest
+  # before anything else is looked at: the two cases naming kioku.evidence_required and
+  # kioku.project_binding_unresolved would fail, and the four naming
+  # kioku.invalid_request would pass for a reason none of them describes.
+  def call_tool(name, arguments)
+    super(name, signed(arguments))
+  end
 
   # "query: string (1..1024 chars) — required when mode=lexical" [contracts: tools context_search].
   def test_should_refuse_a_lexical_search_when_no_query_is_supplied

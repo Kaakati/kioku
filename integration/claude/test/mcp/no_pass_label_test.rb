@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "../test_helper"
+require_relative "../kioku/contract_signing"
 
 # The core invariant of the system: no caller can assert that a check passed.
 #
@@ -14,6 +15,17 @@ require_relative "../test_helper"
 #  [contracts: labels.applicability; plan §3.1].
 class McpNoPassLabelTest < Minitest::Test
   include Kioku::TestSupport::McpCase
+  include Kioku::TestSupport::ContractSigning
+
+  # Every mutation below is signed the way a real caller signs it. Each of these cases
+  # expects kioku.invalid_request for a smuggled verdict — a caller-supplied
+  # claim_support, a normalized_result, an execution_authorized flag. Once the boundary
+  # recomputes the request digest (E1), an unsigned mutation earns exactly that code for
+  # its digest instead, and every case in this file would keep passing while the
+  # invariant it names went unmeasured.
+  def call_tool(name, arguments)
+    super(name, signed(arguments))
+  end
 
   # --- context_task: the verdict-bearing tool -------------------------------------
 

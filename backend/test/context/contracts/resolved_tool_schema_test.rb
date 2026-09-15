@@ -59,6 +59,23 @@ class ResolvedToolSchemaTest < ActiveSupport::TestCase
                  "these core-derived names are declared as writable inputs"
   end
 
+  # D6, structurally. Closure at every depth is what replaces the two runtime name
+  # lists, and it only replaces them if every object really is closed: one object the
+  # loader hands back with additionalProperties left open is one more place a
+  # core-derived name can be nested past the check, which is the defect itself. A $ref
+  # resolved into a node that carries sibling keywords is exactly where that keyword
+  # goes missing, so this measures the loader's output rather than the artifact's text.
+  #
+  # Conditional applicators are excluded by construction: an `if` subschema that closed
+  # the object would never match, so only nodes that declare themselves an object with
+  # properties are required to close.
+  test "should close every request object in every schema the loader hands back" do
+    closed, open_objects = closure_census
+
+    refute_empty closed, "the closure walk found no declared request object to check at all"
+    assert_empty open_objects, "these request objects accept undeclared keys"
+  end
+
   # A loader that leaves a $ref behind hands a validator a schema it cannot apply,
   # and the properties behind that reference are then silently unvalidated.
   test "should leave no unresolved reference in the schema the loader hands back" do
@@ -73,6 +90,25 @@ class ResolvedToolSchemaTest < ActiveSupport::TestCase
 
   def build_state
     Fixtures.artifact("implemented.json").dig("tools", "context_remember", "properties")
+  end
+
+  # [closed object pointers, open object pointers] across every published tool.
+  def closure_census
+    Fixtures.resolved_tools.keys.each_with_object([[], []]) do |tool, (closed, open_objects)|
+      walk_objects(Context::Contracts.tool_schema(tool), "#{tool}#") do |pointer, node|
+        (node["additionalProperties"] == false ? closed : open_objects) << pointer
+      end
+    end
+  end
+
+  def walk_objects(node, pointer, &block)
+    case node
+    when Hash
+      block.call(pointer, node) if node["type"] == "object" && node["properties"].is_a?(Hash)
+      node.each { |key, value| walk_objects(value, "#{pointer}/#{key}", &block) }
+    when Array
+      node.each_with_index { |value, index| walk_objects(value, "#{pointer}/#{index}", &block) }
+    end
   end
 
   def core_derived_in(tool, node, names, found = [])

@@ -32,13 +32,14 @@ module Context
         end
 
         def call(actor:, envelope:, kind:, destination:, title:, body:, evidence:,
-                 memory_key: nil, applicability: nil, mandatory: false, lifecycle: nil)
+                 memory_key: nil, applicability: nil, mandatory: false, lifecycle: nil,
+                 received_body: nil)
           remember(
             Request.new(actor: actor, envelope: envelope, kind: kind,
                         destination: destination, title: title, body: body,
                         evidence: evidence, memory_key: memory_key,
                         applicability: applicability, mandatory: mandatory,
-                        lifecycle: lifecycle)
+                        lifecycle: lifecycle, received_body: received_body)
           )
         rescue Errors::Error => error
           Result.refused(error)
@@ -78,11 +79,29 @@ module Context
         # --- idempotency -----------------------------------------------------
 
         # Plan 7.1: repeating the same idempotency key and payload returns the
-        # prior receipt; a different payload conflicts and writes nothing.
+        # prior receipt; a different payload conflicts and writes nothing. The
+        # key is actor-scoped (frozen contract), so the lookup is too: another
+        # actor's receipt is not this caller's outcome and is not this caller's
+        # to be shown.
         def replay(request)
-          record = writer.receipt_for(request.envelope.idempotency_key)
-          return nil if record.nil?
-          unless record.request_digest == request.envelope.request_digest
+          record = receipt_for(request)
+          record && outcome_of(record, request)
+        end
+
+        def receipt_for(request)
+          writer.receipt_for(actor: request.actor,
+                             idempotency_key: request.envelope.idempotency_key)
+        end
+
+        # What this caller's own committed receipt means for this call.
+        def outcome_of(record, request)
+          # E1. Both sides of this comparison are core-computed: the stored receipt
+          # holds the digest of the content that actually committed, and the incoming
+          # one is recomputed from the content that actually arrived. Comparing the
+          # caller's ASSERTED digest here was the defect — it let a stale assertion buy
+          # a `saved` for content the core never stored, and made identical content
+          # under a different assertion look like a conflict.
+          unless record.request_digest == request.computed_digest
             raise Errors::IdempotencyConflict.new(
               "the idempotency key was reused with a different request digest",
               details: { receipt_id: record.receipt_id, request_digest: record.request_digest }
@@ -108,19 +127,40 @@ module Context
           )
         end
 
-        # Only object references are staged. An evidence_key or event_key ref is
-        # a contract shape this phase does not implement, and is refused rather
-        # than silently dropped from the eligibility count.
+        # D4. A ref names exactly one of the three keys the shared schema declares.
+        # Naming none, or naming two, is genuinely ambiguous — the core would have to
+        # guess which reference the caller meant — so that stays kioku.invalid_request.
+        #
+        # A WELL-FORMED ref this build cannot resolve is not a malformed request. It is
+        # reported per entry in evidence_rejected with a reason from the contract's own
+        # enum, because answering kioku.invalid_request to a caller that sent exactly
+        # what the contract specifies is the same dishonesty D1 removed from status.
+        # Eligibility still decides whether the write commits at all: an empty eligible
+        # set is kioku.evidence_required, which a caller branches on differently —
+        # add evidence, rather than fix the request.
+        REF_KEYS = %i[evidence_key object_key event_key].freeze
+
         def stage(entry)
           fields = entry.to_h.transform_keys(&:to_sym)
-          object_key = fields[:ref].to_h.transform_keys(&:to_sym)[:object_key]
-          invalid!("evidence.ref.object_key") if object_key.blank?
+          ref = fields[:ref].to_h.transform_keys(&:to_sym)
+                      .slice(*REF_KEYS).reject { |_, value| value.blank? }
+          invalid!("evidence.ref") unless ref.size == 1
 
-          {
-            ref: { object_key: object_key },
-            relation: (fields[:relation] || :supports).to_sym,
-            durable: object_store.stage(object_key: object_key).durable?
-          }
+          relation = (fields[:relation] || :supports).to_sym
+          return stage_object(ref, relation) if ref.key?(:object_key)
+
+          # This phase has no resolver for an evidence_key or event_key, so the handle
+          # is unresolvable here. That is `not_found`, not a malformed request.
+          { ref: ref, relation: relation, durable: false, reason: :not_found }
+        end
+
+        # Unavailable bytes and an unresolvable handle are different reasons;
+        # collapsing them would send an operator looking in the wrong place.
+        def stage_object(ref, relation)
+          durable = object_store.stage(object_key: ref[:object_key]).durable?
+
+          { ref: ref, relation: relation, durable: durable,
+            reason: durable ? nil : :unavailable }
         end
 
         # --- canonical commit ------------------------------------------------
@@ -137,9 +177,28 @@ module Context
               memory: memory, revision: memory.current_revision, request: request,
               receipt: receipt, outbox_event_id: emit(memory),
               evidence_accepted: accepted.map { |entry| entry.slice(:ref, :relation) },
-              evidence_rejected: rejected.map { |entry| { ref: entry[:ref], reason: :unavailable } }
+              # D4. Each entry carries the reason staging established. Hardcoding
+              # :unavailable here reported an unresolvable handle as missing bytes.
+              evidence_rejected: rejected.map { |entry| entry.slice(:ref, :reason) }
             )
           end
+        rescue ActiveRecord::RecordNotUnique => error
+          arbitrate(request, error)
+        end
+
+        # Plan 9's stack criterion: "Concurrent PostgreSQL writes cannot duplicate
+        # revisions/receipts." Two creates that share a key both pass the replay
+        # lookup, both build a memory, and the receipt's unique index refuses one
+        # of them — the only arbiter there is, since a CREATE has no head to lock.
+        # The loser's whole transaction has already rolled back by the time this
+        # runs, so the honest answer is the committed receipt's: a replay, or the
+        # conflict a different payload earns. ActiveRecord::RecordNotUnique is not
+        # a kioku.* code and would otherwise reach the caller as a bare 500.
+        def arbitrate(request, error)
+          record = receipt_for(request)
+          raise error if record.nil?
+
+          outcome_of(record, request)
         end
 
         # Invariant 4: a stale writer fails its expected-revision check and
@@ -161,9 +220,14 @@ module Context
 
         # Plan 5.1: an event and its canonical outbox rows commit together, so
         # this participates in the transaction above and never opens its own.
+        #
+        # The work key names the change being announced rather than the row that
+        # announces it, so a reconciliation loop that re-records accepted work
+        # collides instead of scheduling a second job for the same revision.
         def emit(memory)
           outbox.record(
             event_type: OUTBOX_EVENT_TYPE,
+            work_key: "#{memory.memory_key}:#{memory.current_revision}",
             payload: { memory_key: memory.memory_key, revision: memory.current_revision,
                        store_kind: memory.store_kind },
             project_key: memory.project_key

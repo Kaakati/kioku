@@ -4,7 +4,14 @@ require_relative "../errors"
 
 module Kioku
   module Mcp
-    # Validation primitives shared by the six tool validators.
+    # The refusal primitives the six tool validators share.
+    #
+    # Shape, enum, bound and closure checking is no longer here: it is one structural
+    # pass over the shared artifact's own schema (Kioku::Contracts::Schema). What remains
+    # are the refusals a schema cannot express, because they carry a wire name of their
+    # own — a value the contract declares PERMANENTLY unsupported is not a typo to be
+    # corrected, and a caller told kioku.invalid_request would go looking for a spelling
+    # mistake instead of learning the mechanism does not exist.
     #
     # Every refusal names a field, never a value: an error message is operator-facing and
     # content-redacted, so a refused write cannot echo the remembered body back to the
@@ -20,74 +27,30 @@ module Kioku
         raise Kioku::Error.new("kioku.unsupported_operation", message: detail, details: details)
       end
 
-      # The published schema is the whole accepted surface, so anything else is refused
-      # rather than ignored.
-      def only(arguments, permitted)
-        unknown = arguments.keys - permitted
-        return if unknown.empty?
-
-        invalid!("unrecognized fields for this call: #{unknown.sort.join(', ')}")
-      end
-
-      def require_keys(arguments, required)
-        missing = required.reject { |key| arguments.key?(key) }
-        return if missing.empty?
-
-        invalid!("required fields are missing: #{missing.sort.join(', ')}")
-      end
-
-      def text(arguments, key, max:)
-        value = arguments[key]
-        invalid!("#{key} must be a string") unless value.is_a?(String)
-        invalid!("#{key} must be non-blank") if value.strip.empty?
-        invalid!("#{key} exceeds #{max} characters") if value.length > max
-        value
-      end
-
-      def list(arguments, key, min:, max:)
-        value = arguments[key]
-        invalid!("#{key} must be an array") unless value.is_a?(Array)
-        invalid!("#{key} must carry between #{min} and #{max} entries") unless value.size.between?(min, max)
-        value
-      end
-
-      def enum(arguments, key, allowed)
-        value = arguments[key]
-        invalid!("#{key} must be one of: #{allowed.join(', ')}") unless allowed.include?(value)
-        value
-      end
-
-      def integer(arguments, key, minimum:)
-        value = arguments[key]
-        invalid!("#{key} must be an integer") unless value.is_a?(Integer)
-        invalid!("#{key} must be at least #{minimum}") if value < minimum
-        value
-      end
-
-      def object(arguments, key)
-        value = arguments[key]
-        invalid!("#{key} must be an object") unless value.is_a?(Hash)
-        value
-      end
-
-      def typed_handles(arguments, key, min:, max:)
-        entries = list(arguments, key, min: min, max: max)
-        entries.each_with_index do |entry, index|
-          invalid!("#{key}[#{index}] must be a typed handle") unless entry.is_a?(Hash)
-          text(entry, "key", max: 512)
-          invalid!("#{key}[#{index}].kind must be a string") unless entry["kind"].is_a?(String)
-        end
-        entries
-      end
-
       # "an unvalidated name returns kioku.unsupported_operation"
-      # [contracts: tools context_related].
-      def edge_kinds(arguments, key, vocabulary)
-        kinds = list(arguments, key, min: 1, max: 8)
-        unvalidated = kinds.reject { |kind| vocabulary.include?(kind) }
-        return kinds if unvalidated.empty?
+      # [contracts: tools context_related / context_search x-kioku-refusals].
+      def unvalidated_edge_kinds!(values, allowed, field)
+        return unless values.is_a?(Array)
+        return if values.all? { |kind| allowed.include?(kind) }
 
-        unsupported!("edge kinds outside the validated vocabulary: #{unvalidated.sort.join(', ')}")
+        unsupported!("#{field} names an edge kind outside the validated vocabulary",
+                     "fields" => [field])
+      end
+
+      # "Covers ... hops greater than 2" [contracts: errors kioku.unsupported_operation].
+      # A third hop is a request for a mechanism this contract does not have, not a bound
+      # to nudge upward.
+      def hops_above_ceiling!(value, ceiling, field)
+        return unless value.is_a?(Integer) && ceiling.is_a?(Integer) && value > ceiling
+
+        unsupported!("#{field} above #{ceiling} is not supported by this contract",
+                     "fields" => [field])
+      end
+
+      # These refusals run BEFORE the structural pass, so a nested value may still be any
+      # shape a caller sent. Reaching into it must not raise instead of refusing.
+      def at(payload, *path)
+        path.reduce(payload) { |node, key| node.is_a?(Hash) ? node[key] : nil }
       end
 
       def stringify(value)

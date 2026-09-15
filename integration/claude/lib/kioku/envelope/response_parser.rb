@@ -2,6 +2,7 @@
 
 require_relative "refusals"
 require_relative "schema_version"
+require_relative "../contracts"
 
 module Kioku
   module Envelope
@@ -16,13 +17,16 @@ module Kioku
     class ResponseParser
       include Refusals
 
-      REQUIRED_FIELDS = %w[
-        schema_version request_id status generation_vector coverage limits warnings server_time
-      ].freeze
+      # Read from the shared artifact, so a field the core stops rendering is a field
+      # this parser stops accepting without either file being edited.
+      RESPONSE_SCHEMA = Kioku::Contracts.read("envelope.response.schema.json")
 
-      # "data ... Absent on unauthorized_scope and deadline_expired"
-      # [contracts: response_fields.data].
-      DATA_FORBIDDEN_STATUSES = %w[unauthorized_scope deadline_expired].freeze
+      REQUIRED_FIELDS = RESPONSE_SCHEMA.fetch("required").freeze
+
+      # "data ... Absent (null) on unauthorized_scope, deadline_expired, invalid and
+      # internal_error" [contracts: envelope.response x-kioku-durability-rules].
+      DATA_FORBIDDEN_STATUSES = RESPONSE_SCHEMA.fetch("x-kioku-durability-rules")
+                                               .fetch("data_absent_statuses").freeze
 
       SPOOL_FIELDS = %w[spool_entry_id producer_key producer_epoch producer_sequence].freeze
 
@@ -48,10 +52,15 @@ module Kioku
         invalid!("the response omits required fields: #{missing.sort.join(', ')}")
       end
 
+      # D1. status is present on EVERY response, including transport-level refusals, and
+      # it is the single discriminator: `invalid` carries a caller fault and
+      # `internal_error` a core fault, so a 500 is no longer reported to the model as a
+      # malformed request. The accepted set is the artifact's, never a count kept here.
       def status(payload)
         value = payload["status"]
-        invalid!("status must be one of the nine response discriminations") unless
-          Kioku::Errors.statuses.include?(value)
+        declared = Kioku::Errors.statuses
+        invalid!("status must be one of the #{declared.size} declared response discriminations") unless
+          declared.include?(value)
         value
       end
 
@@ -73,8 +82,11 @@ module Kioku
 
         invalid!("status #{status} requires an error body") unless error.is_a?(Hash)
         descriptor = descriptor_for(error["code"])
+        # The registry binds each code to exactly one status. A core that paired them
+        # freely could report a denial as a conflict, and a caller would retry a scope it
+        # will never be granted.
         invalid!("error code #{descriptor.wire_name} does not carry status #{status}") if
-          descriptor.status && descriptor.status != status
+          descriptor.status != status
 
         build_error(descriptor, error)
       end

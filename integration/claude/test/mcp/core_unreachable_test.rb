@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "../test_helper"
+require_relative "../kioku/contract_signing"
 
 # "Core down | Optional hooks return without enhancement" [plan §9]; the MCP adapter
 # "holds no storage authority" [contracts: envelope.transport_and_actor], so with the
@@ -9,8 +10,18 @@ require_relative "../test_helper"
 # Every test here runs with KIOKU_SOCKET_PATH pointing at a path that cannot exist.
 class McpCoreUnreachableTest < Minitest::Test
   include Kioku::TestSupport::McpCase
+  include Kioku::TestSupport::ContractSigning
 
   SECRET_BODY = "SUPERSECRET-CANARY-BODY-9f3a"
+
+  # The write below is signed the way a real caller signs it. Once the boundary
+  # recomputes the request digest (E1), an unsigned mutation is refused with
+  # kioku.invalid_request before the adapter ever tries the host link, and the case
+  # asserting kioku.source_unavailable for a write would fail for a reason that has
+  # nothing to do with the host being down.
+  def call_tool(name, arguments)
+    super(name, signed(arguments))
+  end
 
   # --- invariants that hold whatever the wire name turns out to be -------------------
 

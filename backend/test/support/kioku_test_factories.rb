@@ -29,13 +29,22 @@ module Kioku
         "sha256:#{Digest::SHA256.hexdigest(seed.to_s)}"
       end
 
+      # The loopback bridge authenticates a principal, not an agent run, so this
+      # actor can claim exactly two things: identity was established by the
+      # bridge credential (`bridge` — the vocabulary agents.identity_source
+      # declares; `transport` names the channel and is in no vocabulary and in no
+      # column), and the join to a Claude Code agent was not established
+      # (`unresolved`, with no agent_key to resolve it to). It previously claimed
+      # `resolved` beside a null agent_key, which is invariant 9's false
+      # independent confirmation and is refused by the events CHECK the moment
+      # the value is actually persisted.
       def bridge_actor(origin_role: :user, principal_id: "kioku.host_bridge")
         Context::Domain::Actor.new(
           principal_id: principal_id,
           origin_role: origin_role,
           installation_key: installation_key,
-          identity_source: :transport,
-          attribution_state: :resolved
+          identity_source: :bridge,
+          attribution_state: :unresolved
         )
       end
 
@@ -47,7 +56,7 @@ module Kioku
                             request_digest: nil, expected_revision: nil, deadline_ms: 5000)
         Context::Contracts::Envelope.new(
           schema_version: "kioku.tool.v1",
-          request_id: SecureRandom.uuid,
+          request_id: SecureRandom.uuid_v7,
           deadline_ms: deadline_ms,
           scope: project_scope(project_key: project_key),
           idempotency_key: idempotency_key,
@@ -61,7 +70,7 @@ module Kioku
       def wire_envelope(overrides = {})
         {
           "schema_version" => "kioku.tool.v1",
-          "request_id" => SecureRandom.uuid,
+          "request_id" => SecureRandom.uuid_v7,
           "deadline_ms" => 5000,
           "scope" => { "store" => "project", "project_key" => PRIMARY_PROJECT_KEY },
           "idempotency_key" => "idem-#{SecureRandom.hex(4)}",
@@ -146,10 +155,14 @@ module Kioku
                                    title: "Searchable memory", category: :infer)
         create_memory(memory_key: memory_key, project_key: project_key, store_kind: store_kind,
                       title: title, body: body, category: category)
+        # `create_memory` writes its revisions with lifecycle 'active'; the
+        # projection describes that revision, so it says the same thing. A
+        # projection whose lifecycle disagreed with its revision would make the
+        # retrieval gate answer a question about a row that does not exist.
         insert_row("memory_search_documents",
                    memory_key: memory_key, revision: 1, store_kind: store_kind,
                    project_key: store_kind == "global" ? nil : project_key,
-                   title: title, body: body)
+                   title: title, body: body, lifecycle: "active")
         memory_key
       end
 

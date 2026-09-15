@@ -120,8 +120,10 @@ CREATE TABLE public.events (
     payload_object_key text,
     observed_at timestamp with time zone NOT NULL,
     recorded_at timestamp with time zone NOT NULL,
+    identity_source text DEFAULT 'unresolved'::text NOT NULL,
     CONSTRAINT events_attribution_matches_agent CHECK ((((attribution_state = 'resolved'::text) AND (agent_key IS NOT NULL)) OR ((attribution_state = ANY (ARRAY['unresolved'::text, 'not_applicable'::text])) AND (agent_key IS NULL)))),
     CONSTRAINT events_attribution_state_vocabulary CHECK ((attribution_state = ANY (ARRAY['resolved'::text, 'unresolved'::text, 'not_applicable'::text]))),
+    CONSTRAINT events_identity_source_vocabulary CHECK ((identity_source = ANY (ARRAY['hook'::text, 'telemetry'::text, 'transcript'::text, 'bridge'::text, 'unresolved'::text]))),
     CONSTRAINT events_origin_role_vocabulary CHECK ((origin_role = ANY (ARRAY['user'::text, 'assistant'::text, 'tool'::text, 'system'::text, 'imported'::text]))),
     CONSTRAINT events_producer_sequence_non_negative CHECK ((producer_sequence >= 0)),
     CONSTRAINT events_project_store_requires_owner CHECK (((store_kind <> 'project'::text) OR (project_key IS NOT NULL))),
@@ -172,6 +174,8 @@ CREATE TABLE public.idempotency_receipts (
     memory_key text,
     revision bigint,
     committed_at timestamp with time zone NOT NULL,
+    installation_key text NOT NULL,
+    actor_principal_id text NOT NULL,
     CONSTRAINT idempotency_receipts_outcome_complete CHECK (((memory_key IS NULL) = (revision IS NULL)))
 );
 
@@ -253,7 +257,9 @@ CREATE TABLE public.memory_search_documents (
     store_kind text NOT NULL,
     project_key text,
     title text NOT NULL,
-    body text NOT NULL
+    body text NOT NULL,
+    lifecycle text NOT NULL,
+    CONSTRAINT memory_search_documents_lifecycle_vocabulary CHECK ((lifecycle = ANY (ARRAY['proposed'::text, 'active'::text, 'superseded'::text, 'retracted'::text])))
 );
 
 
@@ -274,6 +280,22 @@ CREATE SEQUENCE public.memory_search_documents_id_seq
 --
 
 ALTER SEQUENCE public.memory_search_documents_id_seq OWNED BY public.memory_search_documents.id;
+
+
+--
+-- Name: outbox_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbox_events (
+    outbox_event_id text NOT NULL,
+    work_key text NOT NULL,
+    event_type text NOT NULL,
+    payload jsonb NOT NULL,
+    project_key text,
+    dispatch_state text NOT NULL,
+    recorded_at timestamp with time zone NOT NULL,
+    CONSTRAINT outbox_events_dispatch_state_vocabulary CHECK ((dispatch_state = ANY (ARRAY['pending'::text, 'dispatched'::text, 'completed'::text])))
+);
 
 
 --
@@ -436,6 +458,14 @@ ALTER TABLE ONLY public.memory_search_documents
 
 
 --
+-- Name: outbox_events outbox_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbox_events
+    ADD CONSTRAINT outbox_events_pkey PRIMARY KEY (outbox_event_id);
+
+
+--
 -- Name: projects projects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -504,6 +534,13 @@ CREATE INDEX feedback_target ON public.feedback USING btree (memory_key, revisio
 
 
 --
+-- Name: idempotency_receipts_actor_key_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idempotency_receipts_actor_key_unique ON public.idempotency_receipts USING btree (installation_key, actor_principal_id, idempotency_key);
+
+
+--
 -- Name: idempotency_receipts_outcome; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -567,13 +604,6 @@ CREATE INDEX index_feedback_on_author_event_key ON public.feedback USING btree (
 
 
 --
--- Name: index_idempotency_receipts_on_idempotency_key; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX index_idempotency_receipts_on_idempotency_key ON public.idempotency_receipts USING btree (idempotency_key);
-
-
---
 -- Name: index_memories_on_origin_project_key; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -620,6 +650,20 @@ CREATE UNIQUE INDEX index_memory_search_documents_on_memory_key ON public.memory
 --
 
 CREATE INDEX index_memory_search_documents_on_project_key ON public.memory_search_documents USING btree (project_key);
+
+
+--
+-- Name: index_outbox_events_on_project_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_outbox_events_on_project_key ON public.outbox_events USING btree (project_key);
+
+
+--
+-- Name: index_outbox_events_on_work_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX index_outbox_events_on_work_key ON public.outbox_events USING btree (work_key);
 
 
 --
@@ -730,6 +774,14 @@ ALTER TABLE ONLY public.evidence
 
 ALTER TABLE ONLY public.memory_evidence
     ADD CONSTRAINT fk_rails_24cc779b24 FOREIGN KEY (memory_key, revision) REFERENCES public.memory_revisions(memory_key, revision);
+
+
+--
+-- Name: idempotency_receipts fk_rails_3110ede0d1; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.idempotency_receipts
+    ADD CONSTRAINT fk_rails_3110ede0d1 FOREIGN KEY (installation_key) REFERENCES public.installations(installation_key);
 
 
 --
@@ -861,6 +913,14 @@ ALTER TABLE ONLY public.memory_search_documents
 
 
 --
+-- Name: outbox_events fk_rails_d6f1c61f1c; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbox_events
+    ADD CONSTRAINT fk_rails_d6f1c61f1c FOREIGN KEY (project_key) REFERENCES public.projects(project_key);
+
+
+--
 -- Name: events fk_rails_e6b31b4d0c; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -915,6 +975,10 @@ ALTER TABLE ONLY public.memories
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20260915120012'),
+('20260915120011'),
+('20260915120010'),
+('20260915120009'),
 ('20260915120008'),
 ('20260915120007'),
 ('20260915120006'),

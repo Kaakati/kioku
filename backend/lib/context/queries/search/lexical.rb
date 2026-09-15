@@ -6,11 +6,13 @@ module Context
       # ParadeDB BM25 retrieval over the versioned search-document rows
       # (plan 5.4, plan 7.2 step 5).
       #
-      # The scope predicate is applied INSIDE the candidate query, before the
-      # candidate limit, so an unrelated project cannot crowd eligible rows out
-      # of the pool no matter how well it scores. "Scope, deletion and lifecycle
-      # gates still precede ranking and must hold identically on every route"
-      # (frozen contract); applying the limit first would make that false.
+      # The scope and lifecycle predicates are applied INSIDE the candidate
+      # query, before the candidate limit, so an ineligible row cannot crowd
+      # eligible ones out of the pool no matter how well it scores. "Scope,
+      # deletion and lifecycle gates still precede ranking and must hold
+      # identically on every route" (frozen contract); applying the limit first
+      # would make that false, and a gate that only reorders is not a gate — a
+      # retracted statement demoted is still a retracted statement returned.
       #
       # A BM25 score is a relevance score. It is reported separately and is never
       # claim support (invariant 1).
@@ -19,11 +21,24 @@ module Context
                          :title, :bm25_score, :rank, keyword_init: true)
         Result = Struct.new(:items, :execution, keyword_init: true)
 
+        # An allowlist, not a list of exclusions: a lifecycle value a later
+        # version adds is not returned until this gate is told it may be, because
+        # a retrieval gate that fails open hands back exactly what was withdrawn.
+        #
+        # `proposed` is eligible. An assistant-authored global record is recorded
+        # as proposed precisely so it can be reviewed, and context_search declares
+        # lifecycle as both a caller filter and a facet dimension — neither means
+        # anything if only one value can ever be returned. The gate excludes what
+        # has been withdrawn or replaced, not what is unconfirmed.
+        ELIGIBLE_LIFECYCLES = %w[proposed active].freeze
+
+        LIFECYCLE_GATE = "lifecycle IN (#{ELIGIBLE_LIFECYCLES.map { |v| "'#{v}'" }.join(', ')})"
+
         CANDIDATES = <<~SQL
           SELECT memory_key, revision, store_kind, project_key, title,
                  paradedb.score(id) AS bm25_score
           FROM memory_search_documents
-          WHERE %<scope>s AND body @@@ ?
+          WHERE #{LIFECYCLE_GATE} AND %<scope>s AND body @@@ ?
           ORDER BY bm25_score DESC, id ASC
           LIMIT ?
         SQL

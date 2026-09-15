@@ -32,6 +32,17 @@ module Api
       # (plan 6.3: bridge credentials are paired to an installation).
       BRIDGE_PRINCIPAL_ID = "kioku.host_bridge"
 
+      # What that credential is PAIRED TO (plan 6.3: "Pair bridge credentials to
+      # an installation and approved roots"). The pairing is deployment
+      # configuration of the credential, declared alongside KIOKU_BRIDGE_TOKEN in
+      # compose.yml, which is what keeps it transport-derived: nothing a caller
+      # sends can change the installation a write is attributed to or the
+      # authority it is recorded under (plan 6.1, frozen contract
+      # `labels.authority`).
+      INSTALLATION_ENV = "KIOKU_BRIDGE_INSTALLATION_KEY"
+      ORIGIN_ROLE_ENV = "KIOKU_BRIDGE_ORIGIN_ROLE"
+      DEFAULT_ORIGIN_ROLE = "user"
+
       class_attribute :kioku_operation_kind, instance_writer: false, default: :read
 
       def self.kioku_operation(kind)
@@ -57,12 +68,47 @@ module Api
       def current_actor
         @current_actor ||= Context::Domain::Actor.new(
           principal_id: BRIDGE_PRINCIPAL_ID,
-          identity_source: :transport,
+          # How identity was established, in the one vocabulary
+          # `agents.identity_source` declares (hook|telemetry|transcript|bridge|
+          # unresolved). A loopback-bridge caller is `bridge`: nothing but the
+          # bridge credential backs the attribution. `transport` named the
+          # channel rather than the evidence, and no agents row can carry it, so
+          # an event recorded with it could never be reconciled against one.
+          identity_source: :bridge,
+          # Both derived from the credential's own pairing. Leaving either nil
+          # made Actor#authority nil, which writes authority "" into
+          # memory_revisions (whose CHECK names the five-value vocabulary) and
+          # installation_key NULL into events (NOT NULL): the first HTTP-driven
+          # write could not commit at all, and failed as a raw StatementInvalid
+          # rather than as a frozen kioku.* refusal.
+          origin_role: paired_origin_role,
+          installation_key: paired_installation_key,
           # The bridge authenticates a principal, not an agent run. The agent
           # join arrives with captured events, so it stays unresolved here
           # rather than being inferred (invariant 9).
           attribution_state: :unresolved
         )
+      end
+
+      # A credential paired to no installation authenticates nothing this core
+      # can scope a write to. That is a scope denial, not a malformed request:
+      # the caller is who it says it is and still may not write here.
+      def paired_installation_key
+        key = ENV[INSTALLATION_ENV].to_s
+        return key unless key.empty?
+
+        deny_scope!("the bridge credential is not paired to an installation")
+      end
+
+      # The five-value origin vocabulary the authority label is derived from
+      # (frozen contract, `labels.authority`). A role outside it would produce a
+      # label with no defined meaning, so it is refused rather than coerced.
+      def paired_origin_role
+        role = ENV[ORIGIN_ROLE_ENV].to_s
+        role = DEFAULT_ORIGIN_ROLE if role.empty?
+        return role if Context::Domain::Actor::AUTHORITY_BY_ORIGIN_ROLE.key?(role.to_sym)
+
+        deny_scope!("the bridge credential names an origin role outside the vocabulary")
       end
 
       def render_envelope(status:, data: nil, error: nil, coverage: nil,

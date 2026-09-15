@@ -10,8 +10,15 @@
 class MemorySearchDocument < ApplicationRecord
   STORE_KINDS = %w[global project].freeze
 
+  # The same four values as memory_revisions.lifecycle: this row describes a
+  # revision, and the retrieval gate reads it here rather than joining, so a
+  # value the revision table cannot hold would describe a state that does not
+  # exist.
+  LIFECYCLES = %w[proposed active superseded retracted].freeze
+
   validates :memory_key, presence: true, uniqueness: true
   validates :store_kind, inclusion: { in: STORE_KINDS }
+  validates :lifecycle, inclusion: { in: LIFECYCLES }
   validates :title, :body, presence: true
   validate :ownership_names_exactly_one_destination
 

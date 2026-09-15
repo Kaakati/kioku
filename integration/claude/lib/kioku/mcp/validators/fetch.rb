@@ -1,34 +1,23 @@
 # frozen_string_literal: true
 
-require_relative "../rules"
-require_relative "../vocabulary"
-require_relative "../../envelope"
+require_relative "../tool_contract"
 
 module Kioku
   module Mcp
     module Validators
       # [contracts: tools context_fetch]. Batches are bounded at both ends: an empty batch
       # is as malformed as an oversized one, because a fetch names what it wants.
+      #
+      # Every refusal this tool can make at the boundary is structural, so the published
+      # schema is the whole of it. The two conditions its x-kioku-refusals block names —
+      # a handle that does not resolve, and one that was deleted, expired, purged or
+      # redacted — are the core's to answer; the adapter holds no storage authority and
+      # cannot tell them apart without asking.
       class Fetch
-        PERMITTED = %w[envelope handles].freeze
+        CONTRACT = ToolContract.new("context_fetch")
 
         def call(arguments:)
-          Rules.only(arguments, PERMITTED)
-          envelope = Kioku::Envelope.parse_request(arguments["envelope"])
-          validate_handles(arguments)
-          envelope
-        end
-
-        private
-
-        def validate_handles(arguments)
-          handles = Rules.typed_handles(arguments, "handles", min: 1, max: 50)
-          handles.each_with_index do |handle, index|
-            next if Vocabulary::FETCH_HANDLE_KINDS.include?(handle["kind"])
-
-            Rules.invalid!("handles[#{index}].kind must be one of: " \
-                           "#{Vocabulary::FETCH_HANDLE_KINDS.join(', ')}")
-          end
+          CONTRACT.call(arguments: arguments, mutation: false)
         end
       end
     end

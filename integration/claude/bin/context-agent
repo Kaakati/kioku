@@ -1,0 +1,50 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# The Kioku host agent.
+#
+# Plan §3.1: "the agent initiates a persistent authenticated control connection
+# to the core; the host does not expose another inbound service." It is the only
+# process in the host package that talks to the core, the only one that listens
+# on the private Unix socket, and the owner of host filesystem authority and of
+# the durable bounded spool.
+#
+# The path it completes is the one contracts.json declares:
+#
+#   context-mcp (stdio) -> private host Unix socket -> context-agent
+#     -> authenticated loopback bridge -> core
+#
+# stdout carries nothing at all. The agent is spawned as a child process and may
+# inherit a parent's stdout — a JSON-RPC stream, or a hook's event output — so
+# every diagnostic goes to stderr [plan §3 trust-boundary table].
+#
+# Configuration is environment, never request text:
+#   KIOKU_SOCKET_PATH    where the agent listens
+#   KIOKU_SPOOL_DIR      the durable bounded spool's directory
+#   KIOKU_CORE_URL       base URL of the authenticated loopback bridge
+#   KIOKU_BRIDGE_TOKEN   the shared secret that bridge authenticates with
+
+$LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
+
+require "kioku/host_link"
+require "kioku/logger"
+require "kioku/agent/core_link"
+require "kioku/agent/server"
+require "kioku/agent/spool"
+require "kioku/agent/tool_call"
+
+DEFAULT_SPOOL_DIR = File.join(Dir.home, ".kioku", "spool")
+
+logger = Kioku::Logger.new(program: "context-agent")
+
+spool = Kioku::Agent::Spool.new(dir: ENV.fetch("KIOKU_SPOOL_DIR", DEFAULT_SPOOL_DIR))
+core = Kioku::Agent::CoreLink.new(
+  base_url: ENV.fetch("KIOKU_CORE_URL", Kioku::Agent::CoreLink::DEFAULT_BASE_URL),
+  token: ENV["KIOKU_BRIDGE_TOKEN"], logger: logger
+)
+
+Kioku::Agent::Server.new(
+  socket_path: ENV.fetch("KIOKU_SOCKET_PATH", Kioku::HostLink::DEFAULT_SOCKET_PATH),
+  handler: Kioku::Agent::ToolCall.new(spool: spool, core: core, logger: logger),
+  logger: logger
+).run
